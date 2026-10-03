@@ -1,7 +1,8 @@
 # CLAUDE.md — AI Control Layer (HackYeah 2026)
 
 You are working on a security gateway. Correctness of the guardrails matters more than
-features or speed. The full design is in "AI Control Layer — Design Specification v2".
+features or speed. The full design is in "AI Control Layer — Design Specification v2"
+(`docs/spec/`, one file per section; index in `docs/spec/README.md`).
 When this file and the spec disagree, the spec wins; flag the conflict.
 
 ## What this project is
@@ -55,7 +56,7 @@ Ollama must listen on 127.0.0.1 only (`OLLAMA_HOST=127.0.0.1`).
 | `gateway/cli/` | fetch_feed, scan_model |
 | `policy.yaml`, `signatures.json` | Single source of truth; never hard-code what belongs here |
 
-Each module exposes the signatures listed in spec section 13. Do not widen interfaces
+Each module exposes the signatures listed in spec section 13 (`docs/spec/13-interfaces.md`). Do not widen interfaces
 without updating the spec.
 
 ## Non-negotiable rules (security invariants)
@@ -75,7 +76,7 @@ Breaking any of these is a bug, even if a test passes. Each has a test; keep it 
 6. **Deny by default.** Unknown table, column, tool, parameter, parse failure or any
    exception in a check -> deny. A `try/except` around a guardrail must fail closed.
 7. **Hidden values never reach a model.** A value that fails the disclosure rule
-   (spec section 5) must not appear in any model input, judge input included.
+   (spec section 5, `docs/spec/05-tool-contract.md`) must not appear in any model input, judge input included.
    Non-resolved bindings always return the bare placeholder to the model.
 8. **The vault and raw values never leave the gateway.** Not in logs, audit records,
    exceptions, HTTP error bodies or debug prints. Log types and tokens, never values.
@@ -107,7 +108,7 @@ Breaking any of these is a bug, even if a test passes. Each has a test; keep it 
 
 ## Testing rules
 
-- A module is not done until its allowed and blocked tests exist (spec section 14).
+- A module is not done until its allowed and blocked tests exist (spec section 14, `docs/spec/14-testing-strategy.md`).
 - Default to the scripted stub model in `gateway/llm/client.py`; it records every
   input so exposure tests can assert that no hidden value was sent.
 - Tests touching real Ollama get `@pytest.mark.live` and must skip cleanly when it is down.
@@ -129,7 +130,7 @@ Breaking any of these is a bug, even if a test passes. Each has a test; keep it 
 
 Users: `anna` (intern, deny), `marek` (sales_lead, allow, department scope),
 `piotr` (hr_manager, allow, label limit internal). Keys: `demo-anna`, `demo-marek`,
-`demo-piotr`. Anna's salary is 6,200 PLN; the four worked examples in spec section 4
+`demo-piotr`. Anna's salary is 6,200 PLN; the four worked examples in spec section 4 (`docs/spec/04-request-pipeline.md`)
 must work end to end and are the demo script.
 
 ## Team ownership
@@ -149,4 +150,4 @@ Touching another owner's module: keep the interface, add tests, mention it in th
 - Make the smallest change that satisfies the task; do not refactor neighbours.
 - After changes run `pytest` and report the summary line.
 - If a request would weaken an invariant above, stop and say so instead of implementing it.
-- Priorities follow spec section 15: Tier 1 before Tier 2, Tier 2 before stretch.
+- Priorities follow spec section 15 (`docs/spec/15-delivery-plan.md`): Tier 1 before Tier 2, Tier 2 before stretch.

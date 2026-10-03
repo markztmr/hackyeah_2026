@@ -66,11 +66,13 @@ models:
     name: llama3.2              # final choice from the hour-1 test
     trust: local                # local | external
     max_tokens: 512
+    timeout_s: 30                # seconds per model call
   judge:
     provider: ollama
     base_url: http://localhost:11434/v1
     name: "qwen2.5:1.5b"
     max_tokens: 32
+    timeout_s: 10
   allowed:                      # digest from Ollama /api/tags; mismatch = model blocked
     - { name: llama3.2,       digest: "sha256:<pin>" }
     - { name: "qwen2.5:3b",   digest: "sha256:<pin>" }

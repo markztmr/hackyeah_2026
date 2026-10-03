@@ -1,10 +1,12 @@
 """Shared fixtures and test harness (spec section 14). Owner: Person 4.
 
 Config contract used by the fixtures: the gateway reads its policy file from
-``ACL_POLICY_PATH`` and its database from ``ACL_DB_PATH`` when they are set.
+``ACL_POLICY_PATH``, its database from ``ACL_DB_PATH`` and writes audit records to
+``ACL_AUDIT_PATH`` when they are set.
 """
 from __future__ import annotations
 
+import json
 import shutil
 import socket
 from collections.abc import Callable, Iterator
@@ -44,11 +46,30 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def audit_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Every test writes audit records to its own temp file, never into the repo."""
+    path = tmp_path / "audit.jsonl"
+    monkeypatch.setenv("ACL_AUDIT_PATH", str(path))
+    return path
+
+
+@pytest.fixture
+def audit_records(audit_log: Path) -> Callable[[], list[dict[str, Any]]]:
+    """``audit_records()`` -> every audit record written so far in this test."""
+    def read() -> list[dict[str, Any]]:
+        if not audit_log.exists():
+            return []
+        return [json.loads(line) for line in audit_log.read_text(encoding="utf-8").splitlines()]
+    return read
+
+
 @pytest.fixture
 def policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A temp copy of policy.yaml that the test may edit; the gateway reads this copy."""
+    """A temp copy of policy.yaml (and the feed beside it) that the test may edit; the gateway reads this copy."""
     path = tmp_path / "policy.yaml"
     shutil.copyfile(REPO_ROOT / "policy.yaml", path)
+    shutil.copyfile(REPO_ROOT / "signatures.json", tmp_path / "signatures.json")
     monkeypatch.setenv("ACL_POLICY_PATH", str(path))
     return path
 
@@ -89,6 +110,108 @@ def client(policy: Path, stub: StubModel) -> Iterator[TestClient]:
 
     with TestClient(app) as c:
         yield c
+
+
+# Pipeline steps after authentication that receive the Principal.
+_PRINCIPAL_STEPS = (
+    "check_model_and_budget",
+    "inspect_inbound",
+    "run_tool_loop",
+    "authorize_tool_call",
+    "filter_output",
+    "record_usage",
+    "record_issued",
+)
+
+
+@pytest.fixture
+def principals_seen(monkeypatch: pytest.MonkeyPatch, stub: StubModel) -> Callable[..., list[Any]]:
+    """``principals_seen(api_key, messages)`` -> the Principal every later pipeline step received (I2).
+
+    Runs the real ``run_pipeline`` against the shipped policy with the stub model.
+    Each step is spied, then called for real. A step that is not implemented yet
+    ends the run early; the principals recorded up to that point are returned,
+    so the test covers more steps as they land.
+    """
+    from gateway import pipeline
+    from gateway.models import ChatRequest, IssuedCache, Principal, SignatureFeed
+    from gateway.pipeline import GatewayError
+    from gateway.policy.loader import load_policy
+
+    seen: list[Any] = []
+    for name in _PRINCIPAL_STEPS:
+        def spy(*args: Any, _real: Callable[..., Any] = getattr(pipeline, name), **kwargs: Any) -> Any:
+            seen.extend(a for a in (*args, *kwargs.values()) if isinstance(a, Principal))
+            return _real(*args, **kwargs)
+
+        monkeypatch.setattr(pipeline, name, spy)
+
+    def run(api_key: str, messages: list[dict[str, Any]]) -> list[Any]:
+        policy = load_policy(REPO_ROOT / "policy.yaml")
+        req = ChatRequest(model="llama3.2", messages=messages)
+        try:
+            pipeline.run_pipeline(api_key, req, policy, SignatureFeed(version="test"), IssuedCache())
+        except GatewayError:
+            pass  # a step that has not landed yet raised NotImplementedError
+        assert seen, "the pipeline never handed a principal to a later step"
+        return list(seen)
+
+    return run
+
+
+INJECTION_PHRASE = "ignore previous instructions"
+
+
+@pytest.fixture
+def fake_steps(monkeypatch: pytest.MonkeyPatch) -> dict[str, Callable[..., Any]]:
+    """Permissive stand-ins for pipeline steps whose modules have not landed yet.
+
+    Budget, inbound, signatures, judge, tool authorization, fill, output filter,
+    usage and issued-value recording allow everything; the injection check blocks
+    ``INJECTION_PHRASE``. query_data resolves every query to 1 (public). Tests
+    override one step with ``monkeypatch.setattr(gateway.pipeline, name, ...)``.
+    Remove a fake here when its real module lands.
+    """
+    from gateway import pipeline
+    from gateway.agency import loop
+    from gateway.models import Decision, FilledText, SanitizedRequest, ToolDecision, Vault
+
+    def allow(stage: str, control: str) -> Decision:
+        return Decision(stage, control, "allow", "")
+
+    def inspect_inbound(req: Any, p: Any, policy: Any, cache: Any) -> Any:
+        messages = [m.model_dump(exclude_none=True) for m in req.messages]
+        return SanitizedRequest(messages=messages, tools=list(req.tools or [])), Vault(), [allow("inbound", "masker")]
+
+    def check_injection(text: str, policy: Any) -> Decision:
+        if INJECTION_PHRASE in text.lower():
+            return Decision("input_checks", "injection", "block", "The prompt matches a known injection phrase.")
+        return allow("input_checks", "injection")
+
+    def execute(b: Any, p: Any, policy: Any) -> Any:
+        b.status, b.value, b.label = "resolved", 1, "public"
+        return b
+
+    fakes: dict[str, Callable[..., Any]] = {
+        "check_model_and_budget": lambda p, model, estimate, policy: allow("model_and_budget", "budgets"),
+        "inspect_inbound": inspect_inbound,
+        "check_injection": check_injection,
+        "match_signatures": lambda text, surface, feed: allow("input_checks", "signatures"),
+        "judge": lambda text, policy, models=None: allow("input_checks", "semantic"),
+        "authorize_tool_call": lambda call, p, bindings, policy: ToolDecision(call.name, "allow", "fake", "Allowed."),
+        "fill": lambda text, bindings, vault, policy: FilledText(text=text),
+        "filter_output": lambda f, p, policy: (f.text, allow("output_filter", "output_controls")),
+        "record_usage": lambda p, tokens, model, policy: None,
+        "record_issued": lambda p, bindings, cache: None,
+    }
+    for name, fn in fakes.items():
+        monkeypatch.setattr(pipeline, name, fn)
+    monkeypatch.setattr(loop, "check_model_and_budget", fakes["check_model_and_budget"])
+    monkeypatch.setattr(loop, "validate_sql", lambda b, policy: b)
+    monkeypatch.setattr(loop, "authorize", lambda b, p, policy: b)
+    monkeypatch.setattr(loop, "execute", execute)
+    monkeypatch.setattr(loop, "disclose", lambda b, p, policy, *, trust: b.name)
+    return fakes
 
 
 def _strings(obj: Any) -> Iterator[str]:

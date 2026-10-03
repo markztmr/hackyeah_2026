@@ -140,4 +140,4 @@ def test_policy_fixture_is_an_editable_temp_copy(policy: Path, tmp_path: Path) -
 
 
 def test_client_fixture_reaches_the_app(client) -> None:
-    assert client.get("/health").status_code == 501
+    assert client.get("/health").status_code == 200

@@ -26,6 +26,7 @@ Expect = Literal["scalar", "row", "list"]
 Label = Literal["public", "internal", "sensitive"]
 AiDataPolicy = Literal["allow", "deny"]
 Profile = Literal["strict", "balanced", "relaxed"]
+ModelTrust = Literal["local", "external"]
 ControlSource = Literal["explicit", "profile", "default"]
 SpanSource = Literal["model", "gateway"]
 
@@ -276,6 +277,11 @@ class LoopResult:
     decisions: list[Decision] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
+
+    @property
+    def block(self) -> Decision | None:
+        """The decision that blocked the request (tool-name collision, budget, model failure), if any."""
+        return next((d for d in self.decisions if d.verdict == "block"), None)
 
 
 @dataclass(slots=True)

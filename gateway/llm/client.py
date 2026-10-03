@@ -9,13 +9,18 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, runtime_checkable
 
+import httpx
+from openai import OpenAI, OpenAIError
 from openai.types.chat import ChatCompletion
 
 from gateway.models import Policy
+from gateway.policy.loader import setting
 
 Purpose = Literal["answer", "judge"]
 
@@ -37,9 +42,157 @@ class ModelClient(Protocol):
     ) -> ChatCompletion: ...
 
 
+ModelProvider = Callable[[Purpose, Policy], ModelClient]
+"""Picks the client for a purpose. The pipeline takes one by injection; tests pass the stub."""
+
+
+class ModelError(Exception):
+    """A model call failed (timeout, HTTP error, bad response). Carries the error type only, never content (I8)."""
+
+
+# ---------------------------------------------------------------------------
+# OpenAI-compatible adapter: Ollama and external providers share this path
+# ---------------------------------------------------------------------------
+
+
+class OpenAICompatibleClient:
+    """``ModelClient`` over the openai SDK. One instance per base URL, key and timeout.
+
+    No retries: one ``complete`` is one HTTP request, so budget and latency stay exact.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        timeout_s: float,
+        api_key: str = "ollama",  # Ollama ignores the key; the SDK requires one
+        http_client: httpx.Client | None = None,
+    ) -> None:
+        self.base_url = base_url
+        self.timeout_s = timeout_s
+        self._sdk = OpenAI(
+            base_url=base_url, api_key=api_key, timeout=timeout_s, max_retries=0, http_client=http_client,
+        )
+
+    def __repr__(self) -> str:
+        return f"OpenAICompatibleClient(base_url={self.base_url!r}, timeout_s={self.timeout_s})"
+
+    def complete(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        *,
+        model: str,
+        max_tokens: int,
+    ) -> ChatCompletion:
+        kwargs: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": max_tokens}
+        if tools:
+            kwargs["tools"] = tools
+        return self._sdk.chat.completions.create(**kwargs)
+
+
+_clients: dict[tuple[str, str, float], OpenAICompatibleClient] = {}
+
+
 def get_client(purpose: Purpose, policy: Policy) -> ModelClient:
     """Client for ``models.answer`` or ``models.judge`` of this policy snapshot."""
-    raise NotImplementedError
+    cfg = setting(policy, f"models.{purpose}")
+    if purpose == "judge" and (cfg["trust"] != "local" or cfg["provider"] != "ollama"):
+        raise ModelError("The judge model must be a local Ollama model.")
+    if cfg["provider"] == "ollama":
+        api_key = "ollama"
+    else:
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            raise ModelError("OPENAI_API_KEY is not set for the external model provider.")
+    key = (cfg["base_url"], api_key, float(cfg["timeout_s"]))
+    if key not in _clients:
+        _clients[key] = OpenAICompatibleClient(cfg["base_url"], float(cfg["timeout_s"]), api_key)
+    return _clients[key]
+
+
+def ping(purpose: Purpose, policy: Policy, timeout_s: float = 1.0) -> bool:
+    """Whether ``models.<purpose>`` answers HTTP at all (GET {base_url}/models). For /health only."""
+    base_url = setting(policy, f"models.{purpose}.base_url").rstrip("/")
+    try:
+        return httpx.get(f"{base_url}/models", timeout=timeout_s).status_code < 500
+    except httpx.HTTPError:
+        return False
+
+
+def default_provider() -> ModelProvider:
+    """``get_client``, looked up through the module at call time so tests can replace it."""
+    import gateway.llm.client as module
+
+    return module.get_client
+
+
+# ---------------------------------------------------------------------------
+# One call, normalized
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ModelToolCall:
+    """A tool call as the model proposed it. ``arguments`` is raw JSON text, parsed by the caller."""
+
+    id: str
+    name: str
+    arguments: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ModelReply:
+    """Content, tool calls and token usage of one model call. Content is excluded from repr (I8)."""
+
+    content: str | None = field(repr=False)
+    tool_calls: tuple[ModelToolCall, ...]
+    prompt_tokens: int
+    completion_tokens: int
+    usage_estimated: bool
+    finish_reason: str | None
+
+
+def call_model(
+    client: ModelClient,
+    purpose: Purpose,
+    policy: Policy,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+    *,
+    model: str | None = None,
+) -> ModelReply:
+    """Make one model call with ``max_tokens`` from ``models.<purpose>`` and normalize the result.
+
+    The caller checks the budget before calling (I11). Usage the provider omits is
+    estimated as characters / 4.
+    """
+    max_tokens = int(setting(policy, f"models.{purpose}.max_tokens"))
+    name = model or setting(policy, f"models.{purpose}.name")
+    try:
+        completion = client.complete(messages, tools or None, model=name, max_tokens=max_tokens)
+        choice = completion.choices[0]
+        message = choice.message
+        calls = tuple(
+            ModelToolCall(id=c.id, name=c.function.name, arguments=c.function.arguments or "")
+            for c in (message.tool_calls or [])
+            if getattr(c, "function", None) is not None
+        )
+        content = message.content
+        finish_reason = choice.finish_reason
+        usage = completion.usage
+    except (OpenAIError, httpx.HTTPError) as e:
+        raise ModelError(f"Model call failed: {type(e).__name__}.") from None
+    except (IndexError, AttributeError, TypeError, ValueError) as e:
+        raise ModelError(f"Model returned an unusable response: {type(e).__name__}.") from None
+
+    if usage is not None and usage.prompt_tokens is not None and usage.completion_tokens is not None:
+        prompt, completion_tokens, estimated = usage.prompt_tokens, usage.completion_tokens, False
+    else:
+        prompt = _token_count([messages, tools or None])
+        completion_tokens = _token_count([content, [{"name": c.name, "arguments": c.arguments} for c in calls]])
+        estimated = True
+    return ModelReply(content, calls, prompt, completion_tokens, estimated, finish_reason)
 
 
 # ---------------------------------------------------------------------------

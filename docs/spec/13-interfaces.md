@@ -100,18 +100,49 @@ check_model_and_budget(p: Principal, model: str, estimate: int, policy: Policy) 
 inspect_inbound(req: ChatRequest, p: Principal, policy: Policy, cache: IssuedCache) -> tuple[SanitizedRequest, Vault, list[Decision]]
 match_signatures(text: str, surface: str, feed: SignatureFeed) -> Decision
 check_injection(text: str, policy: Policy) -> Decision
-judge(text: str, policy: Policy) -> Decision
-run_tool_loop(req: SanitizedRequest, p: Principal, vault: Vault, policy: Policy) -> LoopResult
+judge(text: str, policy: Policy, *, models: ModelProvider | None = None) -> Decision
+run_tool_loop(req: SanitizedRequest, p: Principal, vault: Vault, policy: Policy, *, models: ModelProvider | None = None, model: str | None = None) -> LoopResult  # block -> LoopResult.block
 validate_sql(b: Binding, policy: Policy) -> Binding          # sets rejected or passes
 authorize(b: Binding, p: Principal, policy: Policy) -> Binding  # sets denied or passes
 execute(b: Binding, p: Principal, policy: Policy) -> Binding    # resolved / empty / error
-disclose(b: Binding, p: Principal, policy: Policy) -> str      # tool result for the model
+disclose(b: Binding, p: Principal, policy: Policy, *, trust: ModelTrust) -> str  # tool result; trust of the receiving model (rule 4)
 authorize_tool_call(call: ToolCall, p: Principal, bindings: dict[str, Binding], policy: Policy) -> ToolDecision
 fill(text: str, bindings: dict[str, Binding], vault: Vault, policy: Policy) -> FilledText
 filter_output(f: FilledText, p: Principal, policy: Policy) -> tuple[str, Decision]
 record_issued(p: Principal, bindings: dict[str, Binding], cache: IssuedCache) -> None
 record_usage(p: Principal, tokens: int, model: str, policy: Policy) -> None
-write_audit(record: AuditRecord) -> None
+write_audit(record: AuditRecord, policy: Policy) -> None   # path: ACL_AUDIT_PATH or audit.path
+
+# gateway/policy/loader.py
+parse_policy(raw: bytes) -> Policy                  # validate + merge; raises PolicyError
+load_policy(path: str | PathLike) -> Policy
+setting(policy: Policy, path: str) -> Any           # dotted path, e.g. "sql_controls.max_rows"
+effective_policy(policy: Policy) -> dict            # every control with value and source
+PolicyStore(path).snapshot() -> Policy              # once per request; reloads if mtime changed
+PolicyStore(path).reload() -> dict                  # manual reload; returns status()
+PolicyStore(path).status() -> dict                  # version, profile, last error (for /health)
+
+# gateway/llm/client.py — the stub and the real client implement ModelClient.complete
+get_client(purpose: Purpose, policy: Policy) -> ModelClient   # default ModelProvider
+call_model(client: ModelClient, purpose: Purpose, policy: Policy, messages, tools=None, *, model=None) -> ModelReply
+# models=None means default_provider(); run_pipeline(..., *, models=...) passes it to judge and run_tool_loop
+
+# gateway/pipeline.py — writes exactly one audit record per call, in finally
+run_pipeline(api_key, req, policy, feed, cache, *, models=None, metrics=None) -> tuple[ChatResponse, Verdict]
+#   block -> assistant message, HTTP 200; AuthError -> 401; anything else -> GatewayError(request_id) -> 500
+
+# gateway/telemetry.py
+StepTimer().step(name)  # context manager; .steps dict of ms, .total_ms()
+Metrics().record(verdict, steps, total_ms); Metrics().snapshot() -> dict   # GET /metrics
+
+# gateway/audit.py
+read_audit(policy, since=None, until=None) -> list[dict]; export_csv(records) -> str
+
+# gateway/inbound/signatures.py
+parse_feed(raw: bytes) -> SignatureFeed; FeedStore(path).snapshot()/reload()/status()
+
+# gateway/budget.py
+resolve_model(model: str, policy: Policy) -> tuple[str | None, Decision]   # allowlist; None = blocked
 ```
 
 ## Team split

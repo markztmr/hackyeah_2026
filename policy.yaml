@@ -1,8 +1,161 @@
 # AI Control Layer — policy (single source of truth). Owner: Person 1.
-# Spec section 6. Only the users block exists so far; user IDs must match
-# employees.id in demo.db (db/seed.py).
+# Spec section 6. User IDs must match employees.id in demo.db (db/seed.py).
+# A control deleted from this file inherits its profile value; only `mode: off`
+# disables it. Core controls (auth, SQL validation, authorization, executor,
+# fill, audit) cannot be disabled.
+
+version: 2
+profile: strict                 # strict | balanced | relaxed
+
+models:
+  answer:
+    provider: ollama            # ollama | openai_compatible
+    base_url: http://localhost:11434/v1
+    name: llama3.2              # final choice from the hour-1 test
+    trust: local                # local | external
+    max_tokens: 512
+    timeout_s: 30                # seconds per model call
+  judge:
+    provider: ollama
+    base_url: http://localhost:11434/v1
+    name: "qwen2.5:1.5b"
+    max_tokens: 32
+    timeout_s: 10
+  allowed:                      # digest from Ollama /api/tags; mismatch = model blocked
+    - { name: llama3.2,       digest: "sha256:<pin>" }
+    - { name: "qwen2.5:3b",   digest: "sha256:<pin>" }
+    - { name: "qwen2.5:1.5b", digest: "sha256:<pin>" }
+  on_unlisted: block            # block | substitute (use models.answer)
+
+  # BEGIN external model example. To use an external provider, replace
+  # models.answer with the block below and add the entry under models.allowed.
+  # With trust: external, values labelled sensitive are never shown to the
+  # model (spec section 5, disclosure rule 4); the user still receives them
+  # through outbound fill. The API key comes from the OPENAI_API_KEY
+  # environment variable, never from this file. The judge stays local.
+  # answer:
+  #   provider: openai_compatible
+  #   base_url: https://api.openai.com/v1
+  #   name: gpt-4o-mini
+  #   trust: external
+  #   max_tokens: 512
+  #   timeout_s: 30
+  # allowed:
+  #   - { name: gpt-4o-mini }   # no digest: pinning applies to local Ollama models
+  # END external model example
 
 users:
   anna:  { api_key: demo-anna,  role: intern,     department: sales, ai_data_policy: deny }
   marek: { api_key: demo-marek, role: sales_lead, department: sales, ai_data_policy: allow }
   piotr: { api_key: demo-piotr, role: hr_manager, department: hr,    ai_data_policy: allow }
+
+data:
+  tables:
+    products:
+      label: public
+    employees:
+      label: internal
+      owner_column: id
+      department_column: department
+      identity_columns: [id, name, email]
+      columns: { email: sensitive }
+    salaries:
+      label: sensitive
+      owner_column: employee_id
+      identity_columns: [employee_id]
+
+roles:
+  intern:
+    max_ai_data_policy: deny
+    max_label_to_model: public
+    tables:
+      products:  { scope: all }
+      employees: { scope: self, columns: [id, name, department] }
+      salaries:  { scope: self }
+    tools:
+      send_email:
+        args: { to: { allow_pattern: "^[^@]+@company\\.pl$" } }
+  sales_lead:
+    max_ai_data_policy: allow
+    max_label_to_model: internal
+    tables:
+      products:  { scope: all }
+      employees: { scope: department, columns: [id, name, department] }
+      salaries:  { scope: self }
+    tools:
+      send_email:
+        args: { to: { allow_pattern: "^[^@]+@company\\.pl$" } }
+      create_ticket: {}
+  hr_manager:
+    max_ai_data_policy: allow
+    max_label_to_model: internal  # salaries are sensitive: never sent to the model
+    tables:
+      products:  { scope: all }
+      employees: { scope: all }
+      salaries:  { scope: all }
+    tools:
+      send_email:
+        args: { to: { allow_pattern: "^[^@]+@company\\.pl$" } }
+        max_label: internal       # may email internal values, never salaries
+      create_ticket: {}
+      # delete_employee, transfer_funds: not listed, so denied
+
+prompt_controls:
+  secrets:          { mode: block }     # API keys, passwords, private keys, tokens
+  pii:              { mode: redact, types: [email, phone, card, pesel, iban] }
+  injection:        { mode: block }     # phrase list, English and Polish
+  signatures:       { mode: block, feed: signatures.json }
+  semantic:         { enabled: true, block_threshold: 0.70, on_failure: block }
+  tool_definitions: { mode: block }     # scan client tool names and descriptions
+  history_remask:   { enabled: true, ttl_minutes: 60 }
+
+sql_controls:
+  allow_statements: [SELECT]
+  allowed_functions: [count, sum, avg, min, max, round, abs, coalesce, ifnull,
+                      lower, upper, length, date, strftime]
+  select_star: reject             # reject | expand
+  scope_enforcement: reject       # reject | rewrite (stretch)
+  aggregates: column_access       # column_access | separate (stretch)
+  recursive_cte: reject
+  max_rows: 50
+  timeout_ms: 500
+  max_bindings_per_request: 10
+
+tool_controls:
+  max_tool_iterations: 3
+  unknown_tool: deny
+  placeholder_egress: deny        # applies when a tool has no max_label
+
+output_controls:
+  mode: redact                    # redact | block
+  echo_own_input: false
+  protected_values: { enabled: true, min_digits: 4 }
+  escape: markdown                # markdown | none
+
+markers:                          # strict: one marker for every non-resolved outcome
+  denied: "[UNAVAILABLE]"
+  rejected: "[UNAVAILABLE]"
+  empty: "[UNAVAILABLE]"
+  error: "[UNAVAILABLE]"
+  prior_value: "[PRIOR_VALUE]"
+  all_denied_message: null        # optional single refusal sentence
+
+budgets:
+  default:    { tokens_per_day: 20000, requests_per_minute: 10, cost_per_day_usd: 0.50 }
+  hr_manager: { tokens_per_day: 200000 }
+  count_judge_tokens: true
+  store: state.db
+
+pricing_per_1k_tokens:            # notional for local compute; real for external
+  llama3.2: 0.0002
+  "qwen2.5:3b": 0.0002
+  "qwen2.5:1.5b": 0.0001
+  gpt-4o-mini: 0.0006
+
+audit:
+  path: logs/audit.jsonl
+  log_prompt_text: masked         # masked | none (never raw)
+  hash_chain: false               # stretch: tamper-evident log
+
+dashboard:
+  refresh_seconds: 2

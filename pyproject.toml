@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-control-layer"
+version = "0.1.0"
+description = "OpenAI-compatible security gateway between AI clients and LLMs (HackYeah 2026)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn",       # serves gateway.main:app
+    "openai",
+    "sqlglot",
+    "PyYAML",
+    "streamlit",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "httpx",         # required by fastapi.testclient
+]
+
+[tool.setuptools.packages.find]
+include = ["gateway*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "live: calls real Ollama; skipped when Ollama is down",
+]

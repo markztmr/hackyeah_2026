@@ -88,9 +88,15 @@ version it was approved for. Two runtime barriers sit on that connection:
   the role may read, and `SQLITE_FUNCTION` for allowlisted functions plus the functions
   SQLite uses for syntax the validator accepts (`like`, `glob`, `current_date`,
   `current_time`, `current_timestamp`). Everything else returns `SQLITE_DENY`. This
-  catches any table, column, function or write the static check missed. It does **not**
-  limit rows: scope `self` and `department` are enforced only by the static authorizer,
-  so its tests carry the row-level guarantee.
+  catches any table, column, function or write the static check missed. It does not
+  see rows: scope `self` is enforced only by the static authorizer, so its tests carry
+  the row-level guarantee.
+- **Department row barrier.** Before the query runs, each department-scoped table it
+  reads is copied into a `TEMP` table of the same name holding only the rows where
+  `department_column = :current_department` (bound parameter). Unqualified names
+  resolve to `temp` before `main`, so the unchanged SQL string (I4) sees only the
+  user's department, and `set_authorizer` allows reads of that table only from `temp`
+  (a read of `main.<table>` is denied; the validator rejects qualified names anyway).
 - `set_progress_handler` aborts the query after `timeout_ms`.
 
 The executor also compares what SQLite actually read with the static result: a read of a

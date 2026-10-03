@@ -11,11 +11,19 @@ barriers that hold even if the static checks missed something (I5):
   tables, unlisted functions) is SQLITE_DENY.
 - ``set_progress_handler``: aborts the query after ``sql_controls.timeout_ms``.
 
+Scope ``department`` also has a row barrier: before the query runs, every
+department-scoped table it reads is copied, only the rows where
+``department_column = :current_department``, into a TEMP table of the same name. An
+unqualified name resolves to ``temp`` before ``main``, so the unchanged SQL string (I4)
+reads only the user's department, and the authorizer allows reads of that table only
+from ``temp``; a read of ``main.<table>`` is denied. The validator rejects
+database-qualified names in any case.
+
 The callback records every read it allows. A read the static checks did not record
 (``tables``/``columns``) is an error, and the label of what SQLite actually read can
 only raise the binding's label. A binding runs only for the user and policy version
-it was approved for (``approved_for``). Row scope (self, department) is enforced by
-the static authorizer only; SQLite's authorizer sees tables and columns, not rows.
+it was approved for (``approved_for``). Row scope ``self`` is enforced by the static
+authorizer only; SQLite's authorizer sees tables and columns, not rows.
 
 Rows are read with ``fetchmany(max_rows + 1)`` to detect truncation. Outcome:
 ``resolved``, ``empty`` or ``error``; never an exception. Reasons never contain
@@ -47,13 +55,48 @@ def db_path() -> Path:
     return Path(os.environ.get("ACL_DB_PATH") or REPO_ROOT / "demo.db")
 
 
+def department_scoped(p: Principal, policy: Policy) -> dict[str, str]:
+    """Table -> department column for every table the role reads with scope ``department``.
+
+    Raises if a department-scoped grant has no valid department column (the loader refuses
+    such a policy; this keeps the executor closed if one reaches it).
+    """
+    role = (policy.tree.get("roles") or {}).get(p.role) or {}
+    meta = {str(k).lower(): v for k, v in ((policy.tree.get("data") or {}).get("tables") or {}).items()}
+    schema = _schema()
+    out: dict[str, str] = {}
+    for name, grant in (role.get("tables") or {}).items():
+        table = str(name).lower()
+        if not isinstance(grant, Mapping) or grant.get("scope") != "department":
+            continue
+        column = str((meta.get(table) or {}).get("department_column") or "").lower()
+        if table not in schema or column not in schema[table]:
+            raise ValueError("Department scope without a valid department column.")
+        out[table] = column
+    return out
+
+
+def _copy_department_rows(conn: sqlite3.Connection, b: Binding, p: Principal, scoped: Mapping[str, str]) -> None:
+    """TEMP copy of each department-scoped table the query reads, holding only the user's department.
+
+    Identifiers are schema names (checked by ``department_scoped``), quoted; the
+    department is a bound parameter. Runs before the authorizer is installed.
+    """
+    for table in sorted(scoped.keys() & {t.lower() for t in b.tables}):
+        conn.execute(f'CREATE TEMP TABLE "{table}" AS SELECT * FROM main."{table}" WHERE "{scoped[table]}" = :d',
+                     {"d": p.department})
+
+
 def _authorizer(p: Principal, policy: Policy, flags: dict[str, Any]) -> Callable[..., int]:
     """The set_authorizer callback for this principal's role. Deny by default (I6).
 
     Every read it allows is recorded in ``flags["reads"]`` as ``(table, column)``,
-    with an empty column for a table read without column values (COUNT(*)).
+    with an empty column for a table read without column values (COUNT(*)). Tables
+    with scope ``department`` may be read only from their TEMP copy; SQLite reports
+    no database for a COUNT(*) table read, which then counts the copy the name resolves to.
     """
     role = (policy.tree.get("roles") or {}).get(p.role) or {}
+    scoped = department_scoped(p, policy)
     schema = _schema()
     tables: set[str] = set()
     columns: set[tuple[str, str]] = set()
@@ -71,8 +114,11 @@ def _authorizer(p: Principal, policy: Policy, flags: dict[str, Any]) -> Callable
         try:
             if action == sqlite3.SQLITE_SELECT:
                 return sqlite3.SQLITE_OK
-            if action == sqlite3.SQLITE_READ and dbname in (None, "main") and arg1:
+            if action == sqlite3.SQLITE_READ and arg1:
                 table, column = arg1.lower(), (arg2 or "").lower()
+                expected = ("temp",) if table in scoped else ("main",)
+                if not (dbname in expected or (dbname is None and not column)):
+                    raise PermissionError("read outside the allowed database")
                 # An empty column name is a table read with no column values (COUNT(*)).
                 if (table in tables and not column) or (table, column) in columns:
                     flags["reads"].add((table, column))
@@ -172,8 +218,10 @@ def execute(b: Binding, p: Principal, policy: Policy) -> Binding:
         if not path.is_file():
             return _fail(b, "The database is not available.")
         conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
-        conn.set_authorizer(_authorizer(p, policy, flags))
         conn.set_progress_handler(progress, _PROGRESS_STEPS)
+        callback = _authorizer(p, policy, flags)  # raises (error) on an invalid department grant
+        _copy_department_rows(conn, b, p, department_scoped(p, policy))
+        conn.set_authorizer(callback)
         params = {"current_user": p.user_id, "current_role": p.role, "current_department": p.department}
         cur = conn.execute(sql, params)
         # Statements are authorized while being prepared, so every read is known here,

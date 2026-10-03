@@ -41,7 +41,7 @@ that use the placeholder, and median latency. The best model becomes `models.ans
 - [x] Protected-value index in the output filter
 - [ ] Dashboard with the panels in section 12, auto-refresh, CSV export
 - [x] Model allowlist with digest pinning; model file scanner
-- [ ] Disclosure with labels for `allow` users; scope `department`
+- [x] Disclosure with labels for `allow` users; scope `department`
 - [ ] Profiles and `GET /policy/effective`
 
 ## Tier 3: stretch

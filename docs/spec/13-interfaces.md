@@ -110,7 +110,8 @@ judge(text: str, policy: Policy, *, models: ModelProvider | None = None) -> Deci
 run_tool_loop(req: SanitizedRequest, p: Principal, vault: Vault, policy: Policy, *, models: ModelProvider | None = None, model: str | None = None) -> LoopResult  # block -> LoopResult.block
 validate_sql(b: Binding, policy: Policy) -> Binding          # sets rejected or passes
 authorize(b: Binding, p: Principal, policy: Policy) -> Binding  # sets denied or passes
-execute(b: Binding, p: Principal, policy: Policy) -> Binding    # resolved / empty / error
+execute(b: Binding, p: Principal, policy: Policy) -> Binding    # resolved / empty / error; department-scoped tables read from a TEMP copy of the user's department
+department_scoped(p: Principal, policy: Policy) -> dict[str, str]   # executor: table -> department column of the role's scope-department grants; raises if a grant has none
 read_column_values(columns: set[tuple[str, str]]) -> dict[tuple[str, str], list]  # executor: every value of schema columns, for the protected-value index only; same ro connection + authorizer (only those columns) + time limit; raises on unknown column or error
 db_state() -> tuple[str, int, int]                                # executor: (path, mtime_ns, size) of demo.db; the index rebuilds when it changes
 disclose(b: Binding, p: Principal, policy: Policy, *, trust: ModelTrust = "external") -> str  # tool result: "{x1} = <value>" only if all five disclosure conditions hold, else the bare placeholder; trust of the receiving model (rule 4); failed condition goes to b.reason

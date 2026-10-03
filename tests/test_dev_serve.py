@@ -1,6 +1,6 @@
 """Dev launcher: the real gateway with only the unbuilt inbound steps stood in. Owner: Person 4.
 
-Remove together with scripts/dev_serve.py when inspect_inbound, judge and record_issued land.
+Remove together with scripts/dev_serve.py when inspect_inbound lands.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ KEY = "sk-proj-Abc123Def456Ghi789Jkl012Mno345"
 
 @pytest.fixture
 def launcher(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    for name in ("inspect_inbound", "judge", "record_issued"):
+    for name in ("inspect_inbound",):
         monkeypatch.setattr(pipeline, name, getattr(pipeline, name))  # undone after the test
     monkeypatch.setenv("ACL_DEV_SHIM", "1")
     dev_serve.install()

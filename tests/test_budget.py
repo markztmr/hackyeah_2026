@@ -272,7 +272,7 @@ def _ask(client: TestClient, content: str = "Hello?"):
 
 
 def test_pipeline_request_within_budget_passes_and_is_charged(
-    clock: list[float], client: TestClient, stub: StubModel, fake_steps, state_db: Path
+    clock: list[float], client: TestClient, stub: StubModel, fake_steps, state_db: Path, audit_records
 ) -> None:
     stub.add(text("Hi."))
     r = _ask(client)
@@ -280,7 +280,9 @@ def test_pipeline_request_within_budget_passes_and_is_charged(
     assert r.headers["x-acl-verdict"] == "allow"
     with sqlite3.connect(state_db) as conn:
         (tokens,) = conn.execute("SELECT tokens FROM usage WHERE user_id = 'anna'").fetchone()
-    assert tokens == r.json()["usage"]["total_tokens"]
+    (record,) = audit_records()
+    assert record["judge_tokens"] > 0  # count_judge_tokens: true
+    assert tokens == r.json()["usage"]["total_tokens"] + record["judge_tokens"]
 
 
 def test_pipeline_request_after_the_limit_is_blocked_before_any_model_call(
@@ -314,7 +316,7 @@ def test_pipeline_estimate_includes_max_tokens(
 
 
 def test_tool_loop_stops_when_a_call_exhausts_the_budget(
-    clock: list[float], client: TestClient, stub: StubModel, fake_steps, monkeypatch: pytest.MonkeyPatch
+    clock: list[float], client: TestClient, stub: StubModel, fake_steps, monkeypatch: pytest.MonkeyPatch, audit_records
 ) -> None:
     from gateway.agency import loop
 
@@ -329,9 +331,11 @@ def test_tool_loop_stops_when_a_call_exhausts_the_budget(
     stub.add(query, text("Done."))
     assert _ask(client).headers["x-acl-verdict"] == "allow"  # learn the first loop call's estimate
     first_call = estimates[0]
+    (first,) = audit_records()
+    judge_tokens = first["judge_tokens"]  # the judge runs (and is charged) before the loop
 
     clock[0] += 86_400  # a new day: fresh counters and a fresh per-minute window
-    record_usage(ANNA, 20_000 - first_call, "qwen2.5:3b", POLICY)  # exactly room for the first call
+    record_usage(ANNA, 20_000 - judge_tokens - first_call, "qwen2.5:3b", POLICY)  # room for the judge and the first call
     stub.calls.clear()
     stub.add(query, text("Done."))
     r = _ask(client)

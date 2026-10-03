@@ -8,6 +8,7 @@ excluded from every ``repr`` so they cannot leak into logs or exceptions (I8).
 """
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -105,11 +106,37 @@ class IssuedCache(_Sealed):
     Spec section 4 step 3c and step 10. Lives across requests in process memory.
     """
 
-    __slots__ = ("_entries",)
+    __slots__ = ("_entries", "_lock")
+    MAX_PER_USER = 1000  # oldest entries are dropped beyond this, so memory stays bounded
 
     def __init__(self) -> None:
-        # user_id -> [(value, expires_at_epoch_seconds)]
-        self._entries: dict[str, list[tuple[str, float]]] = {}
+        # user_id -> {value: issued_at_epoch_seconds}; insertion order is age order
+        self._entries: dict[str, dict[str, float]] = {}
+        self._lock = threading.Lock()  # requests run in a thread pool
+
+    def add(self, user_id: str, value: str, issued_at: float) -> None:
+        """Remember a value issued to ``user_id``; issuing it again refreshes its age."""
+        if not value:
+            return
+        with self._lock:
+            entries = self._entries.setdefault(user_id, {})
+            entries.pop(value, None)
+            entries[value] = issued_at
+            while len(entries) > self.MAX_PER_USER:
+                del entries[next(iter(entries))]
+
+    def live_values(self, user_id: str, issued_after: float) -> list[str]:
+        """Values issued to ``user_id`` after ``issued_after``; older ones are dropped. For re-masking only."""
+        with self._lock:
+            entries = self._entries.get(user_id)
+            if not entries:
+                return []
+            for value in [v for v, t in entries.items() if t <= issued_after]:
+                del entries[value]
+            if not entries:
+                del self._entries[user_id]
+                return []
+            return list(entries)
 
     def __repr__(self) -> str:
         return f"IssuedCache(users={len(self._entries)}, values={sum(len(v) for v in self._entries.values())})"

@@ -206,3 +206,64 @@ def execute(b: Binding, p: Principal, policy: Policy) -> Binding:
                 conn.close()
             except Exception:  # noqa: BLE001
                 pass
+
+
+# ---------------------------------------------------------------------------
+# Gateway-internal read for the protected-value index (spec section 4 step 9)
+# ---------------------------------------------------------------------------
+
+INDEX_TIMEOUT_S = 5.0
+INDEX_MAX_ROWS = 100_000  # per column; more raises, and the output filter fails closed
+
+
+def db_state() -> tuple[str, int, int]:
+    """(path, mtime_ns, size) of the database file; changes when demo.db is rewritten. Raises if missing."""
+    path = db_path().resolve()
+    st = path.stat()
+    return str(path), st.st_mtime_ns, st.st_size
+
+
+def read_column_values(columns: set[tuple[str, str]]) -> dict[tuple[str, str], list[Any]]:
+    """Every value of each schema ``(table, column)``, for the protected-value index. Never for a model.
+
+    Same read-only connection and runtime barriers as ``execute``: the authorizer
+    allows only SELECT and reads of exactly these columns, and the progress handler
+    aborts after ``INDEX_TIMEOUT_S``. Unknown tables or columns, too many rows or any
+    database error raise; the caller fails closed. Identifiers come from the schema
+    file, never from a request.
+    """
+    schema = _schema()
+    wanted = {(t.lower(), c.lower()) for t, c in columns}
+    if any(t not in schema or c not in schema[t] or not (t + c).replace("_", "").isalnum() or not (t + c).isascii()
+           for t, c in wanted):
+        raise ValueError("Unknown table or column for the protected-value index.")
+    tables = {t for t, _ in wanted}
+    deadline = time.monotonic() + INDEX_TIMEOUT_S
+
+    def check(action: int, arg1: str | None, arg2: str | None, dbname: str | None, source: str | None) -> int:
+        if action == sqlite3.SQLITE_SELECT:
+            return sqlite3.SQLITE_OK
+        if action == sqlite3.SQLITE_READ and dbname in (None, "main"):
+            table, column = (arg1 or "").lower(), (arg2 or "").lower()
+            # An empty column is the table read itself, which carries no column values.
+            if (table, column) in wanted or (not column and table in tables):
+                return sqlite3.SQLITE_OK
+        return sqlite3.SQLITE_DENY
+
+    path = db_path()
+    if not path.is_file():
+        raise FileNotFoundError("The database is not available.")
+    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        conn.set_authorizer(check)
+        conn.set_progress_handler(lambda: int(time.monotonic() > deadline), _PROGRESS_STEPS)
+        out: dict[tuple[str, str], list[Any]] = {}
+        for table, column in sorted(wanted):
+            cur = conn.execute('SELECT "' + column + '" FROM "' + table + '"')  # schema identifiers, checked above
+            rows = cur.fetchmany(INDEX_MAX_ROWS + 1)
+            if len(rows) > INDEX_MAX_ROWS:
+                raise ValueError("Too many rows for the protected-value index.")
+            out[(table, column)] = [r[0] for r in rows]
+        return out
+    finally:
+        conn.close()

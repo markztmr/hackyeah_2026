@@ -56,7 +56,7 @@ def today(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_metrics_after_one_allowed_and_one_blocked_request(
-    client: TestClient, stub: StubModel, fake_steps, masked_inbound, real_chain, fixed_ids, today,
+    client: TestClient, stub: StubModel, fake_steps, masked_inbound, real_chain, fixed_ids, today, audit_records,
 ) -> None:
     stub.add(tool_call("query_data", {"sql": SALARY_SQL, "purpose": "own salary", "expect": "scalar"}),
              text("Your salary is {x1} PLN."))
@@ -79,7 +79,9 @@ def test_metrics_after_one_allowed_and_one_blocked_request(
     assert set(newest) == {"time", "request_id", "user", "role", "verdict", "control", "reason"}
 
     anna = m["tokens_and_cost_by_user"]["users"]["anna"]
-    assert anna["tokens"] == allowed.json()["usage"]["total_tokens"] + blocked.json()["usage"]["total_tokens"]
+    judged = sum(rec["judge_tokens"] for rec in audit_records())  # judge usage counts too (count_judge_tokens)
+    assert judged > 0
+    assert anna["tokens"] == allowed.json()["usage"]["total_tokens"] + blocked.json()["usage"]["total_tokens"] + judged
     assert anna["limits"] == {"tokens_per_day": 20_000, "requests_per_minute": 10, "cost_per_day_usd": 0.5}
 
     for raw in ("6200", "6,200", API_KEY):

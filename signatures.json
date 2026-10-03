@@ -1,6 +1,7 @@
 {
   "version": "2026-10-03.1",
   "source": "local file (spec section 9); replaced by python -m gateway.cli.fetch_feed <url>",
+  "sha256": "17cd4f0fc32d3cb52ac3dbea6f43802a0a4d93c8753f3e8eb4042dedcf3253a6",
   "signatures": [
     {
       "id": "SIG-DESER-001",

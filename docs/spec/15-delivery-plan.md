@@ -36,11 +36,11 @@ that use the placeholder, and median latency. The best model becomes `models.ans
 ## Tier 2: complete (H10 to H17)
 
 - [ ] Real Ollama end to end
-- [ ] Judge model with hardened prompt and `on_failure`
-- [ ] History re-masking and issued-value cache
-- [ ] Protected-value index in the output filter
+- [x] Judge model with hardened prompt and `on_failure`
+- [x] History re-masking and issued-value cache
+- [x] Protected-value index in the output filter
 - [ ] Dashboard with the panels in section 12, auto-refresh, CSV export
-- [ ] Model allowlist with digest pinning; model file scanner
+- [x] Model allowlist with digest pinning; model file scanner
 - [ ] Disclosure with labels for `allow` users; scope `department`
 - [ ] Profiles and `GET /policy/effective`
 
@@ -49,7 +49,7 @@ that use the placeholder, and median latency. The best model becomes `models.ans
 - [ ] Benchmark script and latency slide
 - [ ] Scope enforcement by rewrite
 - [ ] Separate aggregate permissions
-- [ ] `fetch_feed` command
+- [x] `fetch_feed` command
 - [ ] Buffered SSE for `stream: true`
 - [ ] Hash-chained audit log
 - [ ] `all_denied_message`

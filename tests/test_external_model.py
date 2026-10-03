@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from gateway import pipeline
 from gateway.agency import loop
 from gateway.llm.client import StubModel, text, tool_call
-from gateway.models import Binding, FilledText, Policy, Principal
+from gateway.models import Binding, FilledText, Policy, Principal, Span
 from gateway.policy.loader import parse_policy
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -100,10 +100,15 @@ def salary_binding(monkeypatch: pytest.MonkeyPatch) -> None:
 def filling(monkeypatch: pytest.MonkeyPatch) -> None:
     """Minimal stand-in for outbound fill: resolved values in one regex pass, markers otherwise."""
     def fill(t: str, bindings: dict[str, Binding], vault: Any, policy: Policy) -> FilledText:
-        def one(m: re.Match[str]) -> str:
+        out, spans, pos = "", [], 0
+        for m in re.finditer(r"\{x\d+\}", t):  # one pass; inserted values are gateway spans
             b = bindings.get(m.group(0))
-            return str(b.value) if b is not None and b.status == "resolved" else "[UNAVAILABLE]"
-        return FilledText(text=re.sub(r"\{x\d+\}", one, t))
+            value = str(b.value) if b is not None and b.status == "resolved" else "[UNAVAILABLE]"
+            out += t[pos:m.start()]
+            spans.append(Span(len(out), len(out) + len(value), "gateway", m.group(0)))
+            out += value
+            pos = m.end()
+        return FilledText(text=out + t[pos:], spans=spans)
 
     monkeypatch.setattr(pipeline, "fill", fill)
 

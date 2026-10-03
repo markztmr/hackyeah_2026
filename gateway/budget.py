@@ -1,6 +1,6 @@
 """Check and record usage (state.db). Spec section 4 steps 2 and 10, section 6 (budgets). Owner: Person 4.
 
-Model allowlist part by Person 1. Digest pinning (Tier 2) is not implemented yet.
+Model allowlist part by Person 1; digest pinning in ``gateway/llm/digests.py`` (spec section 9).
 
 Counters live in their own SQLite file, ``ACL_STATE_PATH`` (tests) or ``budgets.store``
 (relative to the repository root). This module is the only one that opens it, and it
@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from gateway.binding.executor import db_path
+from gateway.llm import digests
 from gateway.models import Decision, Policy, Principal
 from gateway.policy.loader import setting
 
@@ -99,21 +100,27 @@ def resolve_model(model: str, policy: Policy) -> tuple[str | None, Decision]:
 
     Exact name match against ``models.allowed``. Unlisted: block, or substitute
     ``models.answer`` per ``models.on_unlisted`` (only if that model is itself allowed).
+    The model actually used must then pass digest pinning (``digests.block_reason``).
     Reasons never repeat the requested name: it is client input.
     """
     start = time.perf_counter()
 
-    def decision(verdict: str, reason: str) -> Decision:
-        return Decision(STAGE, "models.allowed", verdict, reason, (time.perf_counter() - start) * 1000)  # type: ignore[arg-type]
+    def decision(verdict: str, reason: str, control: str = "models.allowed") -> Decision:
+        return Decision(STAGE, control, verdict, reason, (time.perf_counter() - start) * 1000)  # type: ignore[arg-type]
 
     try:
         allowed = {m["name"] for m in setting(policy, "models.allowed")}
         if model in allowed:
-            return model, decision("allow", "Requested model is allowed.")
-        answer = setting(policy, "models.answer.name")
-        if setting(policy, "models.on_unlisted") == "substitute" and answer in allowed:
-            return answer, decision("log", f"Requested model is not allowed; using {answer} instead.")
-        return None, decision("block", "Requested model is not allowed by policy.")
+            resolved, ok = model, decision("allow", "Requested model is allowed.")
+        else:
+            answer = setting(policy, "models.answer.name")
+            if setting(policy, "models.on_unlisted") != "substitute" or answer not in allowed:
+                return None, decision("block", "Requested model is not allowed by policy.")
+            resolved, ok = answer, decision("log", f"Requested model is not allowed; using {answer} instead.")
+        blocked = digests.block_reason(resolved, policy)
+        if blocked:
+            return None, decision("block", blocked, "models.digest")
+        return resolved, ok
     except Exception:  # noqa: BLE001 - a failing check denies (I6)
         return None, decision("block", "Model allowlist check failed.")
 

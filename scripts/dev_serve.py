@@ -2,18 +2,15 @@
 
     ACL_DEV_SHIM=1 python scripts/dev_serve.py      # gateway on http://127.0.0.1:8000
 
-Three pipeline steps are not built yet and raise NotImplementedError, so the plain
+One pipeline step is not built yet and raises NotImplementedError, so the plain
 ``uvicorn gateway.main:app`` answers every chat request with HTTP 500. This launcher
-replaces only those three, reusing every inbound piece that does exist:
+replaces only ``inspect_inbound``, assembled from the real pieces: the masker
+(``mask_messages`` + ``masking_decisions``), history re-masking and the tool-definition
+scan.
 
-- ``inspect_inbound``: the real masker (``mask_messages`` + ``masking_decisions``) and the
-  real tool-definition scan. Missing: history re-masking, so values from earlier answers
-  in the history reach the model.
-- ``judge``: allows everything (no semantic check; the phrase list and feed still run).
-- ``record_issued``: does nothing.
-
-Everything else (auth, budget, SQL checks, executor, fill, tool authorization, output
-filter, audit) is the real code. Delete this file when inbound lands.
+Everything else (auth, budget, judge, SQL checks, executor, disclosure, fill, issued
+values, tool authorization, output filter, audit) is the real code. Delete this file
+when ``inspect_inbound`` lands.
 """
 from __future__ import annotations
 
@@ -28,6 +25,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from gateway import pipeline  # noqa: E402
+from gateway.inbound.history import remask_history  # noqa: E402
 from gateway.inbound.injection import scan_tool_definitions  # noqa: E402
 from gateway.inbound.masker import mask_messages, masking_decisions  # noqa: E402
 from gateway.inbound.signatures import FeedStore  # noqa: E402
@@ -49,8 +47,9 @@ def _feed(policy: Policy) -> Any:
 def inspect_inbound(
     req: ChatRequest, p: Principal, policy: Policy, cache: IssuedCache
 ) -> tuple[SanitizedRequest, Vault, list[Decision]]:
-    """Steps 3a, 3b and 3d with the real code; 3c (history re-masking) is missing."""
-    messages, vault, findings = mask_messages([m.model_dump(exclude_none=True) for m in req.messages], policy)
+    """Steps 3a-3d with the real pieces."""
+    messages, _ = remask_history([m.model_dump(exclude_none=True) for m in req.messages], p, cache, policy)
+    messages, vault, findings = mask_messages(messages, policy)
     tools = list(req.tools or [])
     decisions = masking_decisions(findings)
     if tools:
@@ -58,23 +57,12 @@ def inspect_inbound(
     return SanitizedRequest(messages=messages, tools=tools, findings=findings), vault, decisions
 
 
-def judge(text: str, policy: Policy, *, models: Any = None) -> Decision:
-    return Decision("input_checks", "semantic", "allow", "Judge not built (dev launcher).")
-
-
-def record_issued(p: Principal, bindings: Any, cache: IssuedCache) -> None:
-    return None
-
-
 def install() -> None:
-    """Replace the three unbuilt steps. Exits unless ACL_DEV_SHIM=1."""
+    """Replace the unbuilt inbound step. Exits unless ACL_DEV_SHIM=1."""
     if os.environ.get(OPT_IN) != "1":
-        sys.exit(f"Refusing to start: set {OPT_IN}=1. This launcher stubs the judge and history re-masking.")
+        sys.exit(f"Refusing to start: set {OPT_IN}=1. This launcher stands in for inspect_inbound.")
     pipeline.inspect_inbound = inspect_inbound
-    pipeline.judge = judge
-    pipeline.record_issued = record_issued
-    log.warning("DEV LAUNCHER: judge allows everything, history re-masking and issued-value recording are off. "
-                "Not for the demo.")
+    log.warning("DEV LAUNCHER: inspect_inbound is assembled from its parts. Not for the demo.")
 
 
 def main() -> None:

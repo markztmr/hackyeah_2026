@@ -56,9 +56,10 @@ class ModelError(Exception):
 
 
 class OpenAICompatibleClient:
-    """``ModelClient`` over the openai SDK. One instance per base URL, key and timeout.
+    """``ModelClient`` over the openai SDK. One instance per base URL, key, timeout and temperature.
 
     No retries: one ``complete`` is one HTTP request, so budget and latency stay exact.
+    ``temperature`` None leaves the provider default; the judge uses 0 for stable scores.
     """
 
     def __init__(
@@ -67,9 +68,11 @@ class OpenAICompatibleClient:
         timeout_s: float,
         api_key: str = "ollama",  # Ollama ignores the key; the SDK requires one
         http_client: httpx.Client | None = None,
+        temperature: float | None = None,
     ) -> None:
         self.base_url = base_url
         self.timeout_s = timeout_s
+        self.temperature = temperature
         self._sdk = OpenAI(
             base_url=base_url, api_key=api_key, timeout=timeout_s, max_retries=0, http_client=http_client,
         )
@@ -86,12 +89,15 @@ class OpenAICompatibleClient:
         max_tokens: int,
     ) -> ChatCompletion:
         kwargs: dict[str, Any] = {"model": model, "messages": messages, "max_tokens": max_tokens}
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
         if tools:
             kwargs["tools"] = tools
         return self._sdk.chat.completions.create(**kwargs)
 
 
-_clients: dict[tuple[str, str, float], OpenAICompatibleClient] = {}
+JUDGE_TEMPERATURE = 0.0  # a classifier: the same content should get the same score
+_clients: dict[tuple[str, str, float, float | None], OpenAICompatibleClient] = {}
 
 
 def get_client(purpose: Purpose, policy: Policy) -> ModelClient:
@@ -105,9 +111,10 @@ def get_client(purpose: Purpose, policy: Policy) -> ModelClient:
         api_key = os.environ.get("OPENAI_API_KEY", "")
         if not api_key:
             raise ModelError("OPENAI_API_KEY is not set for the external model provider.")
-    key = (cfg["base_url"], api_key, float(cfg["timeout_s"]))
+    temperature = JUDGE_TEMPERATURE if purpose == "judge" else None
+    key = (cfg["base_url"], api_key, float(cfg["timeout_s"]), temperature)
     if key not in _clients:
-        _clients[key] = OpenAICompatibleClient(cfg["base_url"], float(cfg["timeout_s"]), api_key)
+        _clients[key] = OpenAICompatibleClient(cfg["base_url"], float(cfg["timeout_s"]), api_key, temperature=temperature)
     return _clients[key]
 
 

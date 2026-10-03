@@ -19,7 +19,9 @@ from fastapi.responses import JSONResponse, Response
 from gateway import audit
 from gateway.auth import AuthError, authenticate
 from gateway.inbound.signatures import FeedStore
+from gateway.outbound import protected_index
 from gateway.llm import client as llm
+from gateway.llm import digests
 from gateway.models import ChatRequest, IssuedCache, Policy, SignatureFeed
 from gateway.pipeline import GatewayError, audit_rejected_request, run_pipeline
 from gateway.policy.loader import PolicyStore, effective_policy, policy_path, setting
@@ -36,10 +38,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.cache = IssuedCache()
     app.state.metrics = Metrics()
     _feed_store(app, app.state.policy_store.snapshot())  # an invalid feed also stops startup
+    protected_index.warm(app.state.policy_store.snapshot())
+    _check_digests(app.state.policy_store.snapshot())
     yield
 
 
 app = FastAPI(title="AI Control Layer", lifespan=lifespan)
+
+
+def _check_digests(policy: Policy) -> None:
+    """Digest pinning at startup and on reload; a model that fails is blocked per request, never at startup."""
+    try:
+        digests.check_digests(policy, force=True)
+    except Exception as e:  # noqa: BLE001 - resolve_model re-checks and fails closed
+        log.warning("Model digest check failed (%s).", type(e).__name__)
 
 
 def _policy_store(app: FastAPI) -> PolicyStore:
@@ -138,7 +150,7 @@ def list_models(request: Request, authorization: str | None = Header(default=Non
 
 @app.get("/health")
 def health(request: Request) -> JSONResponse:
-    """Liveness, policy and feed versions, model reachability, last reload errors. Spec section 13."""
+    """Liveness, policy and feed versions, model reachability and digests, last reload errors. Spec section 9, 13."""
     policy, _ = _snapshots(request.app)
     policy_status = _policy_store(request.app).status()
     feed_status = _feed_store(request.app, policy).status()
@@ -149,13 +161,15 @@ def health(request: Request) -> JSONResponse:
             "base_url": setting(policy, f"models.{purpose}.base_url"),
             "reachable": llm.ping(purpose, policy),
         }
-    healthy = not policy_status["error"] and not feed_status["error"] and all(m["reachable"] for m in models.values())
+    digest_status = digests.health(policy)
+    healthy = (not policy_status["error"] and not feed_status["error"] and digest_status["ok"]
+               and all(m["reachable"] for m in models.values()))
     return JSONResponse({
         "status": "ok" if healthy else "degraded",
         "policy": policy_status,
         "feed": feed_status,
         "models": models,
-        "digests": {"checked": False, "detail": "Digest pinning is not implemented yet."},
+        "digests": digest_status,
     })
 
 
@@ -177,6 +191,7 @@ def policy_reload(request: Request) -> JSONResponse:
     """Manual reload of policy and feed; 422 with the validation error if either is invalid. Spec section 6, 13."""
     policy_status = _policy_store(request.app).reload()
     feed_status = _feed_store(request.app, _policy_store(request.app).snapshot()).reload()
+    _check_digests(_policy_store(request.app).snapshot())
     ok = not policy_status["error"] and not feed_status["error"]
     return JSONResponse({"ok": ok, "policy": policy_status, "feed": feed_status}, status_code=200 if ok else 422)
 

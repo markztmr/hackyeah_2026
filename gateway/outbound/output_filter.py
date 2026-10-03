@@ -10,11 +10,13 @@ character, so text split around an inserted value is still caught):
 - secrets and PII (same detectors and checksums as the inbound masker). The user's
   own input reaches the answer only as a gateway-inserted span via
   ``echo_own_input``, so PII written by the model is PII the user did not supply;
+- guessed protected values: numbers from the protected-value index of the user's role
+  (``protected_index``), in any formatting, when ``protected_values.enabled``. If the
+  index cannot be built, the answer is blocked (deny by default);
 - leftover ``{x<n>}`` placeholders become the ``rejected`` marker.
 
 ``output_controls.mode``: ``redact`` replaces findings with ``[REDACTED]``; ``block``
 blocks the answer. Leftover placeholders are always just replaced.
-Guessed protected values (protected-value index) are Tier 2 and not checked yet.
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ import time
 
 from gateway.inbound.masker import find_sensitive
 from gateway.models import Decision, FilledText, Policy, Principal
+from gateway.outbound.protected_index import find_protected, protected_values
 from gateway.policy.loader import setting
 
 REDACTED = "[REDACTED]"
@@ -43,7 +46,7 @@ def _model_segments(f: FilledText) -> list[tuple[int, int]]:
     return segments
 
 
-def _findings(f: FilledText, segments: list[tuple[int, int]]) -> list[tuple[int, int, str]]:
+def _findings(f: FilledText, segments: list[tuple[int, int]], protected: list[tuple[int, int]]) -> list[tuple[int, int, str]]:
     """Sensitive matches to redact, in ``f.text`` positions, merged where they overlap.
 
     Each model segment is checked on its own, and the whole filled text is checked too: a
@@ -56,6 +59,7 @@ def _findings(f: FilledText, segments: list[tuple[int, int]]) -> list[tuple[int,
         found += [(a + s, a + e, kind) for s, e, kind in find_sensitive(f.text[a:b])]
     found += [(s, e, kind) for s, e, kind in find_sensitive(f.text)
               if any(s < b and a < e for a, b in segments)]
+    found += [(s, e, "protected value") for s, e in protected if any(s < b and a < e for a, b in segments)]
     merged: list[tuple[int, int, str]] = []
     for s, e, kind in sorted(found):
         if merged and s < merged[-1][1]:
@@ -72,7 +76,15 @@ def filter_output(f: FilledText, p: Principal, policy: Policy) -> tuple[str, Dec
     mode = setting(policy, "output_controls.mode")
     marker = setting(policy, "markers.rejected")
     segments = _model_segments(f)
-    findings = _findings(f, segments)
+    protected: list[tuple[int, int]] = []
+    if setting(policy, "output_controls.protected_values.enabled"):
+        try:
+            values = protected_values(p.role, policy)
+            protected = find_protected(f.text, values, int(setting(policy, "output_controls.protected_values.min_digits")))
+        except Exception:  # noqa: BLE001 - deny by default (I6): no index, no answer
+            ms = (time.perf_counter() - start_t) * 1000
+            return "", Decision(STAGE, CONTROL, "block", "The protected-value check failed.", ms)
+    findings = _findings(f, segments, protected)
     found = [kind for _, _, kind in findings]
     leftovers = 0
 

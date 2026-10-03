@@ -280,16 +280,65 @@ def test_vault_never_leaves_the_request() -> None:
     pytest.fail("not implemented")
 
 
-@pytest.mark.skip(reason="needs gateway/binding/disclosure.py and gateway/inbound/history.py")
-def test_hidden_values_never_reach_any_model_input() -> None:
+def test_hidden_values_never_reach_any_model_input(client, stub, fake_steps, db, monkeypatch) -> None:  # noqa: ANN001
     """I9. A value that fails the disclosure rule never appears in any model input, in this or later requests."""
-    pytest.fail("not implemented")
+    from gateway.agency import loop
+    from gateway.binding.authorizer import authorize
+    from gateway.binding.disclosure import disclose
+    from gateway.binding.executor import execute
+    from gateway.binding.sql_validator import validate_sql
+    from gateway.llm.client import text, tool_call
+
+    for name, fn in {"validate_sql": validate_sql, "authorize": authorize, "execute": execute,
+                     "disclose": disclose}.items():
+        monkeypatch.setattr(loop, name, fn)
+
+    def ask(key: str, messages: list[dict]) -> str:
+        r = client.post("/v1/chat/completions", headers={"Authorization": f"Bearer {key}"},
+                        json={"model": "qwen2.5:3b", "messages": messages})
+        return r.json()["choices"][0]["message"]["content"]
+
+    # (user, hidden value it reads): Anna (deny) her own salary; Piotr (allow) a sensitive salary.
+    for key, sql, value in [("demo-anna", "SELECT salary FROM salaries WHERE employee_id = :current_user", "6200"),
+                            ("demo-piotr", "SELECT salary FROM salaries WHERE employee_id = 'anna'", "6200")]:
+        start = len(stub.calls)
+        stub.add(tool_call("query_data", {"sql": sql, "purpose": "t", "expect": "scalar"}), text("It is {x1}."))
+        question = {"role": "user", "content": "Salary?"}
+        answer = ask(key, [question])
+        assert value in answer  # the user gets it ...
+        stub.add(text("Ok."))
+        ask(key, [question, {"role": "assistant", "content": answer}, {"role": "user", "content": "Thanks"}])
+        seen = "\n".join(str(m) for c in stub.calls[start:] for m in c.messages)
+        assert value not in seen and "[PRIOR_VALUE]" in seen, key  # ... no model ever does, now or next turn
 
 
-@pytest.mark.skip(reason="needs gateway/binding/disclosure.py")
-def test_disclosure_respects_labels_and_model_trust() -> None:
+def test_disclosure_respects_labels_and_model_trust(policy: Path) -> None:
     """I10. Values above max_label_to_model are never disclosed; external models never receive sensitive values."""
-    pytest.fail("not implemented")
+    import yaml
+
+    from gateway.binding.disclosure import disclose
+    from gateway.models import Binding, Principal
+    from gateway.policy.loader import parse_policy
+
+    rank = {"public": 0, "internal": 1, "sensitive": 2}
+    data = yaml.safe_load(policy.read_text(encoding="utf-8"))
+    data["roles"]["hr_manager"]["max_label_to_model"] = "sensitive"  # so rule 4 alone must hide sensitive values
+    for name, pol in {"shipped": parse_policy(policy.read_bytes()),
+                      "hr sensitive": parse_policy(yaml.safe_dump(data).encode("utf-8"))}.items():
+        for user, u in pol.tree["users"].items():
+            p = Principal(user, u["role"], u["department"], u["ai_data_policy"])
+            role = pol.tree["roles"][u["role"]]
+            for label in rank:
+                for trust in ("local", "external"):
+                    b = Binding(name="{x1}", sql="", purpose="", expect="scalar", status="resolved",
+                                value=48000, label=label)  # type: ignore[arg-type]
+                    shown = disclose(b, p, pol, trust=trust)  # type: ignore[arg-type]
+                    if rank[label] > rank[role["max_label_to_model"]] or (trust == "external" and label == "sensitive"):
+                        assert shown == "{x1}" and not b.disclosed, (name, user, label, trust)
+    # Control: the rule does disclose when everything holds, so the asserts above are not vacuous.
+    piotr = Principal("piotr", "hr_manager", "hr", "allow")
+    b = Binding(name="{x1}", sql="", purpose="", expect="scalar", status="resolved", value=12, label="internal")
+    assert disclose(b, piotr, parse_policy(policy.read_bytes()), trust="external") == "{x1} = 12"
 
 
 # ---------------------------------------------------------------------------
@@ -447,7 +496,7 @@ def test_output_filter_runs_on_every_answer_and_tool_call(client, stub, fake_ste
 # ---------------------------------------------------------------------------
 
 
-def test_each_request_uses_one_policy_version(client, stub, fake_steps, policy, audit_records, monkeypatch) -> None:  # noqa: ANN001
+def test_each_request_uses_one_policy_version(client, stub, judge_stub, fake_steps, policy, audit_records, monkeypatch) -> None:  # noqa: ANN001
     """I16. A request is evaluated against one policy version, recorded in its audit record."""
     import hashlib
     import os
@@ -468,7 +517,7 @@ def test_each_request_uses_one_policy_version(client, stub, fake_steps, policy, 
             os.utime(policy, ns=(mtime, mtime))
             return stub.complete(*args, **kwargs)
 
-    monkeypatch.setattr(llm, "get_client", lambda purpose, pol: EditsPolicyMidRequest())
+    monkeypatch.setattr(llm, "get_client", lambda purpose, pol: judge_stub if purpose == "judge" else EditsPolicyMidRequest())
     seen_after_model: list[str] = []
     real_fill = pipeline.fill
     monkeypatch.setattr(pipeline, "fill", lambda t, b, v, pol: seen_after_model.append(pol.version_hash) or real_fill(t, b, v, pol))

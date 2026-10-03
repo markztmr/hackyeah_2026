@@ -22,8 +22,8 @@ models:
     max_tokens: 32
     timeout_s: 10
   allowed:                      # digest from Ollama /api/tags; mismatch = model blocked
-    - { name: "qwen2.5:3b",   digest: "sha256:<pin>" }
-    - { name: "qwen2.5:1.5b", digest: "sha256:<pin>" }
+    - { name: "qwen2.5:3b",   digest: "sha256:357c53fb659c5076de1d65ccb0b397446227b71a42be9d1603d46168015c9e4b" }
+    - { name: "qwen2.5:1.5b", digest: "sha256:65ec06548149b04c096a120e4a6da9d4017ea809c91734ea5631e89f96ddc57b" }
   on_unlisted: block            # block | substitute (use models.answer)
 
   # BEGIN external model example. To use an external provider, replace

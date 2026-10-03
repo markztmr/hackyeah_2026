@@ -235,3 +235,13 @@ def test_external_judge_is_refused(base: dict[str, Any], monkeypatch: pytest.Mon
 def test_stub_fixture_is_what_the_default_provider_returns(stub: StubModel, shipped) -> None:
     """Callers that are not given a provider look it up through the module, so tests can swap it."""
     assert llm.default_provider()("answer", shipped) is stub
+
+
+def test_judge_client_runs_at_temperature_zero_and_the_answer_client_at_the_default() -> None:
+    from gateway.llm.client import JUDGE_TEMPERATURE, OpenAICompatibleClient, get_client
+    from gateway.policy.loader import load_policy
+
+    pol = load_policy(Path(__file__).resolve().parent.parent / "policy.yaml")
+    judge_client, answer_client = get_client("judge", pol), get_client("answer", pol)
+    assert isinstance(judge_client, OpenAICompatibleClient) and judge_client.temperature == JUDGE_TEMPERATURE == 0.0
+    assert isinstance(answer_client, OpenAICompatibleClient) and answer_client.temperature is None

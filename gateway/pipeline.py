@@ -94,6 +94,11 @@ def _estimate(obj: Any) -> int:
     return max(1, len(json.dumps(obj, ensure_ascii=False, default=str)) // 4)
 
 
+def _count_tokens(value: Any) -> int:
+    """A reported token count; anything that is not a non-negative int counts as 0."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
 def _text(content: Any) -> str:
     """Text of an OpenAI message content: a string or a list of parts."""
     if isinstance(content, str):
@@ -443,8 +448,10 @@ def _input_checks(
     record.decisions.append(budget)
     _stop_on_block([budget])
     verdict = judge(combined, policy, models=models)
-    # judge_tokens stays 0 until the judge reports its usage.
+    record.judge_tokens = _count_tokens(getattr(verdict, "tokens", 0))
     record_usage(p, record.judge_tokens, judge_model, policy, judge=True)
+    # A plain Decision in the audit record; the token count is recorded in judge_tokens.
+    verdict = Decision(verdict.stage, verdict.control, verdict.verdict, verdict.reason, verdict.latency_ms)
     record.decisions.append(verdict)
     _stop_on_block([verdict])
 

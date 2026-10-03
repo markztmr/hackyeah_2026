@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from gateway.llm import client as llm
 from gateway.llm.client import StubModel, text
+from gateway.policy.loader import setting
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 OLLAMA_ADDR = ("127.0.0.1", 11434)
@@ -60,6 +61,31 @@ def state_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "state.db"
     monkeypatch.setenv("ACL_STATE_PATH", str(path))
     return path
+
+
+@pytest.fixture(autouse=True)
+def ollama_tags(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
+    """Offline stand-in for Ollama /api/tags: every pinned model is installed with its pinned digest.
+
+    Tests change the outcome through the returned dict: ``installed`` maps names to
+    digests (overrides; ``None`` removes a model), ``down`` makes /api/tags unreachable.
+    """
+    from gateway.llm import digests
+
+    state: dict[str, Any] = {"installed": {}, "down": False, "calls": 0}
+
+    def fake(policy: Any) -> dict[str, str] | None:
+        state["calls"] += 1
+        if state["down"]:
+            return None
+        out = {m["name"]: digests.normalize_digest(m.get("digest")) for m in setting(policy, "models.allowed")}
+        out.update(state["installed"])
+        return {k: v for k, v in out.items() if v}
+
+    monkeypatch.setattr(digests, "installed_digests", fake)
+    digests._STORE.clear()
+    yield state
+    digests._STORE.clear()
 
 
 @pytest.fixture
@@ -174,21 +200,23 @@ INJECTION_PHRASE = "ignore previous instructions"
 def fake_steps(monkeypatch: pytest.MonkeyPatch) -> dict[str, Callable[..., Any]]:
     """Permissive stand-ins for pipeline steps whose modules have not landed yet.
 
-    Inbound, judge and issued-value recording allow everything. Budget (in a temp
-    state.db), the injection check, signature feed, output filter, fill and tool
+    Inbound (except history re-masking) allows everything. The judge is real and scores
+    with ``judge_stub`` (risk 0.0 unless scripted). Budget (in a temp state.db), issued-value recording, the injection check, signature feed, output filter, fill and tool
     authorization are real. query_data resolves every query to 1 (public). Tests
     override one step with ``monkeypatch.setattr(gateway.pipeline, name, ...)``.
     Remove a fake here when its real module lands.
     """
     from gateway import pipeline
     from gateway.agency import loop
+    from gateway.inbound.history import remask_history
     from gateway.models import Decision, SanitizedRequest, Vault
 
     def allow(stage: str, control: str) -> Decision:
         return Decision(stage, control, "allow", "")
 
-    def inspect_inbound(req: Any, p: Any, policy: Any, cache: Any) -> Any:
+    def inspect_inbound(req: Any, p: Any, policy: Any, cache: Any) -> Any:  # real history re-masking (3c) only
         messages = [m.model_dump(exclude_none=True) for m in req.messages]
+        messages, _ = remask_history(messages, p, cache, policy)
         return SanitizedRequest(messages=messages, tools=list(req.tools or [])), Vault(), [allow("inbound", "masker")]
 
     def execute(b: Any, p: Any, policy: Any) -> Any:
@@ -197,8 +225,6 @@ def fake_steps(monkeypatch: pytest.MonkeyPatch) -> dict[str, Callable[..., Any]]
 
     fakes: dict[str, Callable[..., Any]] = {
         "inspect_inbound": inspect_inbound,
-        "judge": lambda text, policy, models=None: allow("input_checks", "semantic"),
-        "record_issued": lambda p, bindings, cache: None,
     }
     for name, fn in fakes.items():
         monkeypatch.setattr(pipeline, name, fn)

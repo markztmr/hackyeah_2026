@@ -81,13 +81,21 @@ union branches) is checked against the role:
 Any failure: `denied`. Unknown table, unknown column or internal error: `denied` (I6).
 
 **Execute** (`executor.py`). The exact SQL string that passed is executed (I4) on a
-connection opened as `file:demo.db?mode=ro`. Two runtime barriers sit on that
-connection:
+connection opened as `file:demo.db?mode=ro`. It runs only for the user and policy
+version it was approved for. Two runtime barriers sit on that connection:
 
 - `set_authorizer` allows only `SQLITE_SELECT`, `SQLITE_READ` on tables and columns
-  the role may read, and `SQLITE_FUNCTION` for allowlisted functions. Everything else
-  returns `SQLITE_DENY`. This catches anything the static check missed.
+  the role may read, and `SQLITE_FUNCTION` for allowlisted functions plus the functions
+  SQLite uses for syntax the validator accepts (`like`, `glob`, `current_date`,
+  `current_time`, `current_timestamp`). Everything else returns `SQLITE_DENY`. This
+  catches any table, column, function or write the static check missed. It does **not**
+  limit rows: scope `self` and `department` are enforced only by the static authorizer,
+  so its tests carry the row-level guarantee.
 - `set_progress_handler` aborts the query after `timeout_ms`.
+
+The executor also compares what SQLite actually read with the static result: a read of a
+table or column the static checks did not record is an `error`, and the label of what
+was read can only raise the binding's label.
 
 Rows are read with `fetchmany(max_rows + 1)` so truncation is detected and logged.
 Outcome: `resolved`, `empty` or `error`.
@@ -138,5 +146,12 @@ argument rules:
 `max_label`. The default is none, so the tool call is denied rather than sent with a hidden
 value or a marker. This stops the model from routing protected data out through
 `send_email`.
+
+Two consequences, because argument rules are checked before fill:
+
+- An argument that has a rule (`allow_pattern`, `deny_pattern`, `max`) may not contain a
+  placeholder at all; otherwise a database value could dodge the rule after the check.
+- A value already disclosed to the model counts as that binding's egress when the model
+  copies it literally into an argument (matched as a whole token, case-insensitive).
 
 Arguments of allowed calls also pass through the output filter (secrets, PII).

@@ -84,6 +84,15 @@ class Vault(_Sealed):
     def mask_count(self) -> int:
         return len(self._masks)
 
+    def appears_in(self, text: str) -> bool:
+        """Whether any original in the vault occurs in ``text`` (case-insensitive).
+
+        For the audit guard: it answers yes or no and never hands a value out.
+        """
+        folded = text.casefold()
+        return any(v.strip() and v.strip().casefold() in folded
+                   for v in (*self._masks.values(), *self._placeholders.values()))
+
     def __repr__(self) -> str:
         return f"Vault(mask_tokens={len(self._masks)}, placeholders={len(self._placeholders)})"
 
@@ -247,15 +256,25 @@ class Binding:
     rows: int = 0
     truncated: bool = False
     latency_ms: float = 0.0
+    # The exact string that passed validation and authorization; set by the authorizer and
+    # compared with ``sql`` by the executor before running it (I4).
+    approved_sql: str = field(default="", repr=False)
+    # Who and under which policy version it was approved: (user_id, policy version_hash).
+    # The executor runs it only for that user and that policy version (I4, I14).
+    approved_for: tuple[str, str] = ("", "")
 
 
 @dataclass(slots=True)
 class ToolCall:
-    """A client tool call proposed by the model. Arguments may hold placeholders or values."""
+    """A client tool call proposed by the model. Arguments may hold placeholders or values.
+
+    ``arguments`` is the parsed JSON object, or the raw string when the model's arguments
+    were not a JSON object (tool authorization denies those).
+    """
 
     id: str
     name: str
-    arguments: dict[str, Any] = field(default_factory=dict, repr=False)
+    arguments: dict[str, Any] | str = field(default_factory=dict, repr=False)
 
 
 @dataclass(slots=True)
@@ -365,3 +384,4 @@ class AuditRecord:
     cost_usd: float = 0.0
     step_latency_ms: dict[str, float] = field(default_factory=dict)
     total_latency_ms: float = 0.0
+    prompt_text: str | None = None  # newest user message, masked; None if audit.log_prompt_text is none

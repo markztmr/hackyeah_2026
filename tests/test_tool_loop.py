@@ -390,8 +390,23 @@ def test_model_failure_blocks_the_request(fakes: Fakes, policy: Policy) -> None:
     assert result.text is None
 
 
-def test_client_tool_call_with_malformed_arguments_is_dropped(fakes: Fakes, policy: Policy) -> None:
+def test_model_failure_reason_names_the_error_type_and_is_logged(
+        fakes: Fakes, policy: Policy, caplog: pytest.LogCaptureFixture) -> None:
+    """A timeout and a broken response are told apart, in the audit reason and the log (types only, I8)."""
+    class Down:
+        def complete(self, *args: Any, **kwargs: Any) -> Any:
+            raise ModelError("Model call failed: APITimeoutError.")
+
+    with caplog.at_level("WARNING", logger="gateway.agency.loop"):
+        result = run_tool_loop(_req(), ANNA, Vault(), policy, models=lambda purpose, pol: Down())
+    assert result.block is not None
+    assert result.block.reason == "The model call failed: APITimeoutError."
+    assert "APITimeoutError" in caplog.text
+
+
+def test_client_tool_call_with_malformed_arguments_goes_to_tool_authorization_as_raw_text(
+        fakes: Fakes, policy: Policy) -> None:
     stub = StubModel([tool_call("send_email", "{not json") + tool_call("send_email", {"to": "a@company.pl"})])
     result = _run(stub, policy)
-    assert [c.arguments for c in result.tool_calls] == [{"to": "a@company.pl"}]
-    assert any(d.verdict == "log" and "malformed" in d.reason for d in result.decisions)
+    # Step 7 denies the raw string (tests/test_tool_authz.py); it never reaches the client.
+    assert [c.arguments for c in result.tool_calls] == ["{not json", {"to": "a@company.pl"}]

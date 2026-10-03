@@ -116,7 +116,10 @@ _DETECTORS: tuple[_Detector, ...] = (
         r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----.*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|\Z)", re.S), 0),
     _Detector("jwt", "secrets", re.compile(
         r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*"), 0),
-    _Detector("openai_key", "secrets", re.compile(r"(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}"), 0),
+    # Real keys are long; short test keys ("sk-test123") count too when they contain a digit,
+    # so words such as "sk-learn" stay plain text.
+    _Detector("openai_key", "secrets", re.compile(
+        r"(?<![A-Za-z0-9_-])sk-(?:[A-Za-z0-9_-]{20,}|(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{6,19}(?![A-Za-z0-9_-]))"), 0),
     _Detector("aws_key", "secrets", re.compile(r"(?<![A-Za-z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Za-z0-9])"), 0),
     _Detector("github_token", "secrets", re.compile(
         r"(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})(?![A-Za-z0-9_])"), 0),

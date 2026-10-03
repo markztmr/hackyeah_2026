@@ -67,7 +67,7 @@ slides.
 | `POST /v1/chat/completions` | OpenAI-compatible entry point. Header `Authorization: Bearer <user api key>`. Accepts `messages`, `tools`, `model`. |
 | `GET /v1/models` | Allowed models, so stock clients can list them. |
 | `GET /health` | Liveness, policy and feed versions, model reachability and digest status. |
-| `GET /metrics` | Counters and latency summaries for the dashboard. |
+| `GET /metrics` | Dashboard sections computed from the audit log, one independent key each: `requests_by_verdict`, `blocks_by_control` (today, UTC), `tokens_and_cost_by_user` (today, with budget limits), `last_requests` (newest 50). New sections are new keys. |
 | `GET /policy/effective` | Every control with its value and source. |
 | `POST /policy/reload` | Manual reload of policy and feed; returns success or the validation error. |
 | `GET /audit/export?format=csv` | Audit export for security teams. |
@@ -82,7 +82,10 @@ Authentication failures return 401.
 - `Vault`: mask tokens and placeholders to values. Held in memory, never serialized.
 - `SanitizedRequest`: `messages`, `tools`, `findings` (type and token per match).
 - `Binding`: `name`, `sql`, `purpose`, `expect`; after resolution `status`, `value`, `label`,
-  `disclosed`, `reason`, `tables`, `columns`, `rows`, `truncated`, `latency_ms`.
+  `disclosed`, `reason`, `tables`, `columns`, `rows`, `truncated`, `latency_ms`;
+  `approved_sql` and `approved_for` (user ID, policy version hash), set by `authorize` on pass;
+  `execute` runs only if `sql` still equals `approved_sql` and the principal and policy match (I4, I14).
+- `ToolCall`: `id`, `name`, `arguments` (the JSON object, or the raw string when it was not one; step 7 denies those).
 - `ToolDecision`: `tool`, `verdict`, `rule`, `reason`.
 - `Decision`: `stage`, `control`, `verdict` (allow, redact, block, log), `reason`,
   `latency_ms`.
@@ -90,7 +93,8 @@ Authentication failures return 401.
 - `AuditRecord`: `request_id`, `timestamp`, `policy_version`, `feed_version`, principal
   fields, model names, decisions, binding outcomes (no values), tool decisions,
   `tool_iterations`, `disabled_controls`, tokens, cost, per-step and total latency, final
-  verdict.
+  verdict, `prompt_text` (newest user message after masking and redaction, or null when
+  `audit.log_prompt_text: none`; never raw).
 
 ## Module interfaces (signatures only)
 
@@ -107,13 +111,15 @@ run_tool_loop(req: SanitizedRequest, p: Principal, vault: Vault, policy: Policy,
 validate_sql(b: Binding, policy: Policy) -> Binding          # sets rejected or passes
 authorize(b: Binding, p: Principal, policy: Policy) -> Binding  # sets denied or passes
 execute(b: Binding, p: Principal, policy: Policy) -> Binding    # resolved / empty / error
-disclose(b: Binding, p: Principal, policy: Policy, *, trust: ModelTrust) -> str  # tool result; trust of the receiving model (rule 4)
+disclose(b: Binding, p: Principal, policy: Policy, *, trust: ModelTrust = "external") -> str  # tool result; trust of the receiving model (rule 4); MVP: always the bare placeholder
 authorize_tool_call(call: ToolCall, p: Principal, bindings: dict[str, Binding], policy: Policy) -> ToolDecision
+policy_approved_arguments(call: ToolCall, p: Principal, policy: Policy) -> frozenset[str]  # args whose value fully matches allow_pattern; not redacted by the output filter
 fill(text: str, bindings: dict[str, Binding], vault: Vault, policy: Policy) -> FilledText
+escape_value(text: str, mode: str) -> str   # output_controls.escape; also used by the executor for list cells
 filter_output(f: FilledText, p: Principal, policy: Policy) -> tuple[str, Decision]
 record_issued(p: Principal, bindings: dict[str, Binding], cache: IssuedCache) -> None
-record_usage(p: Principal, tokens: int, model: str, policy: Policy) -> None
-write_audit(record: AuditRecord, policy: Policy) -> None   # path: ACL_AUDIT_PATH or audit.path
+record_usage(p: Principal, tokens: int, model: str, policy: Policy, *, judge: bool = False) -> None  # after every model call; judge usage only if count_judge_tokens
+write_audit(record: AuditRecord, policy: Policy, *, vault: Vault | None = None, bindings: Mapping[str, Binding] | None = None) -> None   # path: ACL_AUDIT_PATH or audit.path; details withheld if the guard finds a request value
 
 # gateway/policy/loader.py
 parse_policy(raw: bytes) -> Policy                  # validate + merge; raises PolicyError
@@ -139,6 +145,9 @@ Metrics().record(verdict, steps, total_ms); Metrics().snapshot() -> dict   # GET
 
 # gateway/audit.py
 read_audit(policy, since=None, until=None) -> list[dict]; export_csv(records) -> str
+audit_metrics(records, policy, *, now=None) -> dict   # GET /metrics sections
+find_request_values(record, *, vault=None, bindings=None) -> list[str]   # field paths holding a vault original or binding value (I8)
+# gateway/models.py: Vault.appears_in(text) -> bool   # for the audit guard; never returns a value
 
 # gateway/inbound/masker.py — building block of inspect_inbound (steps 3a-3b)
 mask_messages(messages: list[dict], policy: Policy) -> tuple[list[dict], Vault, list[Finding]]  # Finding: type, token, action
@@ -152,6 +161,8 @@ parse_feed(raw: bytes) -> SignatureFeed; FeedStore(path).snapshot()/reload()/sta
 
 # gateway/budget.py
 resolve_model(model: str, policy: Policy) -> tuple[str | None, Decision]   # allowlist; None = blocked
+admit_request(p: Principal, policy: Policy) -> Decision   # requests_per_minute: checked and counted once per request (step 2)
+# check_model_and_budget's estimate = prompt characters / 4 + the call's max_tokens
 ```
 
 ## Team split

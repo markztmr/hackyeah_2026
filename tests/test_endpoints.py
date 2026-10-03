@@ -88,18 +88,17 @@ def test_health_never_contains_api_keys(client: TestClient, monkeypatch: pytest.
 # ---------------------------------------------------------------------------
 
 
-def test_metrics_count_requests_by_verdict_with_step_latency(
+def test_metrics_count_requests_by_verdict_from_the_audit_log(
     client: TestClient, stub: StubModel, fake_steps
 ) -> None:
     stub.add(text("ok"))
     client.post("/v1/chat/completions", json=BODY, headers=ANNA)
     client.post("/v1/chat/completions", json=BODY, headers={"Authorization": "Bearer nope"})
 
-    m = client.get("/metrics").json()
-    assert m["requests"] == 2
-    assert m["verdicts"] == {"allow": 1, "block": 1}
-    assert m["steps"]["model_and_tool_loop"]["count"] == 1
-    assert m["total"]["median_ms"] is not None
+    m = client.get("/metrics").json()  # sections in detail: tests/test_metrics.py
+    assert m["requests_by_verdict"] == {"allow": 1, "redact": 0, "block": 1, "log": 0}
+    assert m["blocks_by_control"] == {"core.authentication": 1}
+    assert len(m["last_requests"]) == 2
 
 
 # ---------------------------------------------------------------------------

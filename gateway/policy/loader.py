@@ -19,6 +19,7 @@ from typing import Any, Generic, TypeVar
 
 import yaml
 
+from gateway.llm.prompts import load_schema
 from gateway.models import ControlSource, Policy, Profile
 from gateway.policy.profiles import PROFILES, STRICT_DEFAULTS
 
@@ -353,7 +354,10 @@ _SCHEMA = _obj({
             ),
             "tools": _map(
                 _obj({
-                    "args": _map(_obj({"allow_pattern": _regex()}, required=("allow_pattern",)), key=_ident()),
+                    # Spec section 5 argument rules: allow_pattern (must match), deny_pattern
+                    # (must not match), max (numeric argument at most this value).
+                    "args": _map(_obj({"allow_pattern": _regex(), "deny_pattern": _regex(), "max": _num(-1e15, 1e15)}),
+                                 key=_ident()),
                     "max_label": _LABEL,
                 }),
                 key=_ident(),
@@ -455,6 +459,32 @@ def _reference_problems(data: dict[str, Any]) -> list[str]:
         if user["api_key"] in seen_keys:
             errs.append(f"users.{uid}.api_key: duplicates the key of another user.")
         seen_keys.add(user["api_key"])
+
+    # Every table and column the policy names must exist in db/schema.sql, spelled exactly.
+    # A misspelt label key would otherwise be ignored and the column would silently get
+    # the (lower) table label (deny by default, I6).
+    try:
+        schema = {t: set(cols) for t, cols in load_schema().items()}
+    except Exception:  # noqa: BLE001 - an unreadable schema rejects the policy (fail closed)
+        schema = None
+        errs.append("data.tables: the database schema (db/schema.sql) could not be read.")
+    if schema is not None:
+        for tname, table in tables.items():
+            path = f"data.tables.{tname}"
+            if tname not in schema:
+                errs.append(f"{path}: no such table in the database schema.")
+                continue
+            named = [(f"{path}.columns.{c}", c) for c in table.get("columns", {})]
+            named += [(f"{path}.{k}", table[k]) for k in ("owner_column", "department_column") if k in table]
+            named += [(f"{path}.identity_columns", c) for c in table.get("identity_columns", [])]
+            for where, col in named:
+                if col not in schema[tname]:
+                    errs.append(f"{where}: table {tname} has no column '{col}'.")
+        for rname, role in roles.items():
+            for tname, grant in role.get("tables", {}).items():
+                for col in grant.get("columns") or []:
+                    if tname in schema and col not in schema[tname]:
+                        errs.append(f"roles.{rname}.tables.{tname}.columns: table {tname} has no column '{col}'.")
 
     for rname, role in roles.items():
         for tname, grant in role.get("tables", {}).items():

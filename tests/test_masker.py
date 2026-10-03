@@ -310,3 +310,18 @@ def test_vault_cannot_be_serialized_or_iterated() -> None:
 def test_credential_words_in_prose_are_not_masked(prose: str) -> None:
     _, _, findings = mask_messages(_user(prose), _policy())
     assert findings == []
+
+
+@pytest.mark.parametrize("key", ["sk-test123", "sk-abc12345", "sk-proj-9x8y7z"])
+def test_short_openai_style_keys_are_masked(key: str) -> None:
+    """Regression: a judge's obvious test key (fewer than 20 characters after sk-) reached the model."""
+    from gateway.inbound.masker import find_sensitive
+
+    assert [t for _, _, t in find_sensitive("store this key: " + key)] == ["openai_key"]
+
+
+@pytest.mark.parametrize("text", ["use sk-learn for that", "a risk-free plan", "desk-top", "sk-12"])
+def test_sk_words_without_a_key_shape_are_not_masked(text: str) -> None:
+    from gateway.inbound.masker import find_sensitive
+
+    assert find_sensitive(text) == []

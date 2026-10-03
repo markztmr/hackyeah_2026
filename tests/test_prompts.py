@@ -48,6 +48,14 @@ def test_system_message_lists_every_table_and_column_and_the_rules() -> None:
     assert msg.count("Question:") == 3
 
 
+def test_system_message_says_the_current_parameters_mean_only_the_asker() -> None:
+    """Regression (live run): ":current_department" was used for a named department, ":current_user" for the CEO."""
+    msg = build_system_message(load_schema())
+    assert "department = 'sales'" in msg
+    assert "title = 'CEO'" in msg
+    assert "never :current_user" in msg
+
+
 def test_system_message_contains_no_database_values(db: Path) -> None:
     assert "6200" not in build_system_message(load_schema())
 

@@ -11,17 +11,23 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import traceback
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+import sqlglot
+from sqlglot import exp
+
 from gateway.agency.loop import run_tool_loop
-from gateway.agency.tool_authz import authorize_tool_call
+from gateway.agency.tool_authz import authorize_tool_call, policy_approved_arguments
 from gateway.audit import write_audit
+from gateway.binding.authorizer import CONSTANT_NODES
 from gateway.auth import AuthError, authenticate
-from gateway.budget import check_model_and_budget, cost_usd, record_usage, resolve_model
+from gateway.budget import admit_request, check_model_and_budget, cost_usd, record_usage, resolve_model
 from gateway.inbound.history import record_issued
 from gateway.inbound.injection import check_injection, safe_tool_label
 from gateway.inbound.judge import judge
@@ -41,8 +47,10 @@ from gateway.models import (
     Principal,
     SanitizedRequest,
     SignatureFeed,
+    Span,
     ToolCall,
     ToolDecision,
+    Vault,
     Verdict,
 )
 from gateway.outbound.fill import fill
@@ -145,11 +153,60 @@ def _map_leaves(value: Any, fn: Any) -> Any:
     return value
 
 
+def _filter_json(value: Any, check: Any) -> Any:
+    """The output filter over every part of a tool argument value the client receives:
+    text leaves, dict keys and numbers (I15). Keys and numbers are model-written; a number
+    the filter changes is returned as the filtered text."""
+    if isinstance(value, FilledText):
+        return check(value)
+    if isinstance(value, str):
+        return check(FilledText(text=value, spans=[Span(0, len(value), "model")] if value else []))
+    if isinstance(value, dict):
+        return {_filter_json(str(k), check): _filter_json(v, check) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_filter_json(v, check) for v in value]
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        shown = str(value)
+        filtered = check(FilledText(text=shown, spans=[Span(0, len(shown), "model")]))
+        return value if filtered == shown else filtered
+    return value
+
+
+_AUDIT_VALUE = "[VALUE]"
+
+
+def _audit_sql(sql: str) -> str:
+    """The SQL shape for the audit log: every literal value replaced, tables, columns and
+    parameters kept. The model may write values it has seen (a salary) into SQL (I8).
+    Display redaction only; it decides nothing about whether the SQL is safe."""
+    try:
+        statements = [st for st in sqlglot.parse(sql, read="sqlite") if st is not None]
+        shown = "; ".join(
+            st.transform(lambda n: exp.var(_AUDIT_VALUE) if isinstance(n, CONSTANT_NODES) else n)
+            .sql(dialect="sqlite")
+            for st in statements
+        )
+    except Exception:  # noqa: BLE001 - unparsable: blank every quoted string and digit run
+        shown = re.sub(r"'(?:[^']|'')*'?|\"(?:[^\"]|\"\")*\"?|[0-9A-Fa-f]*\d[0-9A-Fa-f]*", _AUDIT_VALUE, sql)
+    return redact_sensitive(shown)
+
+
+def _approve(args: Any, approved: frozenset[str]) -> Any:
+    """Mark arguments whose value the policy's allow_pattern approved as authorized spans."""
+    if isinstance(args, dict):
+        for key in approved:
+            v = args.get(key)
+            if isinstance(v, FilledText):
+                args[key] = FilledText(text=v.text, spans=[Span(0, len(v.text), "gateway")])
+    return args
+
+
 def _outcome(b: Binding) -> BindingOutcome:
     """Audit view of a binding: everything except the value (I8)."""
     return BindingOutcome(
-        # sql and purpose are model-written: secrets and PII in them never reach the audit log (I8).
-        name=b.name, sql=redact_sensitive(b.sql), purpose=redact_sensitive(b.purpose),
+        # sql and purpose are model-written: literal values, secrets and PII in them never
+        # reach the audit log (I8).
+        name=b.name, sql=_audit_sql(b.sql), purpose=redact_sensitive(b.purpose),
         status=b.status, label=b.label, disclosed=b.disclosed,
         reason=b.reason, tables=list(b.tables), columns=list(b.columns), rows=b.rows,
         truncated=b.truncated, latency_ms=b.latency_ms,
@@ -214,8 +271,9 @@ def run_pipeline(
     """
     timer = StepTimer()
     record = _new_record(policy, feed)
+    held = _RequestValues()
     try:
-        response = _run(api_key, req, policy, feed, cache, models or default_provider(), timer, record)
+        response = _run(api_key, req, policy, feed, cache, models or default_provider(), timer, record, held)
         return response, record.verdict
     except AuthError:
         record.verdict = "block"
@@ -230,13 +288,29 @@ def run_pipeline(
         record.step_latency_ms = dict(timer.steps)
         record.total_latency_ms = timer.total_ms()
         try:
-            write_audit(record, policy)
+            write_audit(record, policy, vault=held.vault, bindings=held.bindings)
         except Exception as e:  # noqa: BLE001
             log.error("Audit write failed for request %s: %s", record.request_id, type(e).__name__)
             raise GatewayError(record.request_id) from None  # replaces any answer: no record, no answer
         finally:
             if metrics is not None:
                 metrics.record(record.verdict, record.step_latency_ms, record.total_latency_ms)
+
+
+@dataclass(slots=True)
+class _RequestValues:
+    """This request's vault and bindings, for the audit guard (I8). Never logged themselves."""
+
+    vault: Vault | None = None
+    bindings: dict[str, Binding] = field(default_factory=dict)
+
+
+def _prompt_text(sanitized: SanitizedRequest, policy: Policy) -> str | None:
+    """Newest user message for the audit record: masked, secrets and PII redacted, or None. Never raw."""
+    if setting(policy, "audit.log_prompt_text") != "masked":
+        return None
+    texts = [t for surface, t in _new_input(sanitized) if surface == "input"]
+    return redact_sensitive(texts[-1]) if texts else None
 
 
 def _run(
@@ -248,6 +322,7 @@ def _run(
     models: ModelProvider,
     timer: StepTimer,
     record: AuditRecord,
+    held: _RequestValues,
 ) -> ChatResponse:
     model_name = req.model
     try:
@@ -264,14 +339,20 @@ def _run(
             if resolved is None:
                 raise _Blocked(model_decision)
             model_name = record.answer_model = resolved
-            estimate = _estimate([[m.model_dump(exclude_none=True) for m in req.messages], req.tools])
+            estimate = (_estimate([[m.model_dump(exclude_none=True) for m in req.messages], req.tools])
+                        + int(setting(policy, "models.answer.max_tokens")))
             budget = check_model_and_budget(p, model_name, estimate, policy)
             record.decisions.append(budget)
             _stop_on_block([budget])
+            rate = admit_request(p, policy)  # requests_per_minute: once per request
+            record.decisions.append(rate)
+            _stop_on_block([rate])
 
         # Step 3: inbound inspection (mask, re-mask history, scan tool definitions).
         with timer.step("inbound"):
             sanitized, vault, inbound = inspect_inbound(req, p, policy, cache)
+            held.vault = vault
+            record.prompt_text = _prompt_text(sanitized, policy)
             record.decisions.extend(inbound)
             _stop_on_block(inbound)
 
@@ -282,6 +363,7 @@ def _run(
         # Steps 5-6: model call and bounded query_data loop.
         with timer.step("model_and_tool_loop"):
             loop = run_tool_loop(sanitized, p, vault, policy, models=models, model=model_name)
+            held.bindings = loop.bindings
             record.decisions.extend(loop.decisions)
             record.bindings = [_outcome(b) for b in loop.bindings.values()]
             record.tool_iterations = loop.iterations
@@ -296,7 +378,9 @@ def _run(
         with timer.step("fill"):
             filled = fill(loop.text or "", loop.bindings, vault, policy)
             filled_args = [
-                (c, _map_leaves(c.arguments, lambda s: fill(s, loop.bindings, vault, policy))) for c in allowed
+                (c, _approve(_map_leaves(c.arguments, lambda s: fill(s, loop.bindings, vault, policy)),
+                             policy_approved_arguments(c, p, policy)))
+                for c in allowed
             ]
 
         # Step 9: output filter on every answer and every allowed tool call's arguments. I10.
@@ -312,17 +396,20 @@ def _run(
             _stop_on_block([out])
             calls = _filter_tool_args(filled_args, p, policy, record)
 
-        # Step 10: usage, issued values; the audit record is written by the caller.
+        # Step 10: issued values; the audit record is written by the caller. Usage was
+        # recorded right after each model call (tool loop, judge), so later checks see it.
         with timer.step("record"):
             tokens = record.prompt_tokens + record.completion_tokens
-            record_usage(p, tokens, model_name, policy)
             record.cost_usd = cost_usd(model_name, tokens, policy)
             record_issued(p, loop.bindings, cache)
 
         if loop.tool_calls and not calls and not answer:
-            names = ", ".join(dict.fromkeys(safe_tool_label(c.name, i) for i, c in enumerate(loop.tool_calls)))
+            labels = list(dict.fromkeys(safe_tool_label(c.name, i) for i, c in enumerate(loop.tool_calls)))
+            names = ", ".join(labels)
+            message = (f"The action {names} was blocked by policy." if len(labels) == 1
+                       else f"The actions {names} were blocked by policy.")
             record.verdict = "block"
-            return _response(record.request_id, model_name, f"The action {names} was blocked by policy.", [],
+            return _response(record.request_id, model_name, message, [],
                              record.prompt_tokens, record.completion_tokens)
         record.verdict = _final_verdict(record)
         return _response(record.request_id, model_name, answer, calls, record.prompt_tokens, record.completion_tokens)
@@ -351,10 +438,13 @@ def _input_checks(
         return
     combined = "\n\n".join(t for _, t in items)
     judge_model = record.judge_model = setting(policy, "models.judge.name")
-    budget = check_model_and_budget(p, judge_model, _estimate(combined), policy)
+    estimate = _estimate(combined) + int(setting(policy, "models.judge.max_tokens"))
+    budget = check_model_and_budget(p, judge_model, estimate, policy)
     record.decisions.append(budget)
     _stop_on_block([budget])
     verdict = judge(combined, policy, models=models)
+    # judge_tokens stays 0 until the judge reports its usage.
+    record_usage(p, record.judge_tokens, judge_model, policy, judge=True)
     record.decisions.append(verdict)
     _stop_on_block([verdict])
 
@@ -386,7 +476,7 @@ def _filter_tool_args(
             decisions.append(d)
             return text
 
-        filtered = _map_leaves(args, check)
+        filtered = _filter_json(args, check)
         record.decisions.extend(decisions)
         if any(d.verdict == "block" for d in decisions):
             record.tool_decisions.append(ToolDecision(call.name, "deny", "output_filter", "Output filter blocked the arguments."))

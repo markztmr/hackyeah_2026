@@ -10,7 +10,9 @@ and the budget is checked before every model call (I11).
 from __future__ import annotations
 
 import json
+import logging
 import time
+import uuid
 from functools import lru_cache
 from typing import Any, get_args
 
@@ -18,7 +20,7 @@ from gateway.binding.authorizer import authorize
 from gateway.binding.disclosure import disclose
 from gateway.binding.executor import execute
 from gateway.binding.sql_validator import validate_sql
-from gateway.budget import check_model_and_budget
+from gateway.budget import check_model_and_budget, record_usage
 from gateway.inbound.injection import is_query_data_name
 from gateway.llm.client import ModelError, ModelProvider, ModelReply, ModelToolCall, call_model, default_provider
 from gateway.llm.prompts import QUERY_DATA_TOOL, build_system_message, load_schema
@@ -36,6 +38,7 @@ from gateway.models import (
 )
 from gateway.policy.loader import setting
 
+log = logging.getLogger(__name__)
 QUERY_DATA = "query_data"
 NOT_EXECUTED = "not executed, re-issue if still needed"
 STAGE = "tool_loop"
@@ -54,7 +57,7 @@ def _tool_name(tool: dict[str, Any]) -> str | None:
 
 
 def _estimate(messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None) -> int:
-    """Rough prompt size for the budget pre-check: characters / 4."""
+    """Rough prompt size for the budget pre-check: characters / 4 (the caller adds max_tokens)."""
     return max(1, len(json.dumps([messages, tools], ensure_ascii=False, default=str)) // 4)
 
 
@@ -183,9 +186,11 @@ def run_tool_loop(
     tools = [*req.tools, QUERY_DATA_TOOL]
     messages: list[dict[str, Any]] = [{"role": "system", "content": _system_message()}, *req.messages]
 
+    max_tokens = int(setting(policy, "models.answer.max_tokens"))
+
     def ask(offered: list[dict[str, Any]] | None) -> ModelReply | None:
         try:
-            budget = check_model_and_budget(p, model_name, _estimate(messages, offered), policy)
+            budget = check_model_and_budget(p, model_name, _estimate(messages, offered) + max_tokens, policy)
         except Exception:  # noqa: BLE001 - budget is a guardrail: fail closed (I11)
             budget = Decision(STAGE, "budgets", "block", "Budget check failed.")
         if budget.verdict == "block":
@@ -193,11 +198,20 @@ def run_tool_loop(
             return None
         try:
             reply = call_model(client, "answer", policy, messages, offered, model=model_name)
-        except ModelError:
-            result.decisions.append(Decision(STAGE, "models.answer", "block", "The model could not be reached."))
+        except ModelError as e:
+            # ModelError carries the error type only (never provider text, I8), so it may be logged and shown.
+            detail = str(e)
+            log.warning("Answer model call failed: %s", detail)
+            reason = "The " + detail[:1].lower() + detail[1:] if detail else "The model call failed."
+            result.decisions.append(Decision(STAGE, "models.answer", "block", reason))
             return None
         result.prompt_tokens += reply.prompt_tokens
         result.completion_tokens += reply.completion_tokens
+        try:  # recorded now, so the next check in this request sees it (I18)
+            record_usage(p, reply.prompt_tokens + reply.completion_tokens, model_name, policy)
+        except Exception:  # noqa: BLE001 - unrecorded spending must not continue
+            result.decisions.append(Decision(STAGE, "budgets", "block", "Usage could not be recorded."))
+            return None
         return reply
 
     for _ in range(max_iterations):
@@ -235,17 +249,34 @@ def run_tool_loop(
     return result
 
 
+MAX_ARGUMENT_DEPTH = 32  # nesting of client tool arguments; deeper is malformed
+
+
+def _depth(value: Any) -> int:
+    """Nesting depth of a parsed JSON value, without recursion."""
+    deepest, stack = 0, [(value, 1)]
+    while stack:
+        v, d = stack.pop()
+        if isinstance(v, (dict, list)):
+            deepest = max(deepest, d)
+            if d <= MAX_ARGUMENT_DEPTH:
+                stack.extend((x, d + 1) for x in (v.values() if isinstance(v, dict) else v))
+    return deepest
+
+
 def _finish(result: LoopResult, reply: ModelReply) -> LoopResult:
     """Final text and/or client tool calls; client calls go to step 7 for authorization."""
     result.text = reply.content
     for c in reply.tool_calls:
         try:
             args = json.loads(c.arguments) if c.arguments.strip() else {}
-        except ValueError:
+            if _depth(args) > MAX_ARGUMENT_DEPTH:
+                args = None
+        except Exception:  # noqa: BLE001 - ValueError, RecursionError on deep nesting: malformed
             args = None
-        if not isinstance(args, dict):
-            result.decisions.append(Decision(STAGE, "tool_controls", "log",
-                                             "A client tool call with malformed arguments was removed."))
-            continue
-        result.tool_calls.append(ToolCall(id=c.id, name=c.name, arguments=args))
+        # Arguments that are not a JSON object go to step 7 as the raw string, where
+        # tool authorization denies them; the client never receives them. The call id is
+        # model output, so the gateway issues its own (it reaches the client unfiltered).
+        result.tool_calls.append(ToolCall(id="call_" + uuid.uuid4().hex[:24], name=c.name,
+                                          arguments=args if isinstance(args, dict) else c.arguments))
     return result

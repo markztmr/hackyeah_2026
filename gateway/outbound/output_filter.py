@@ -5,7 +5,8 @@ spans (values from authorized bindings, the user's own restored input, markers)
 are authorized by construction and never changed. Text not covered by any span
 counts as model-written (deny by default).
 
-On model-written text:
+On model-written text (and on any match in the filled text that includes a model-written
+character, so text split around an inserted value is still caught):
 - secrets and PII (same detectors and checksums as the inbound masker). The user's
   own input reaches the answer only as a gateway-inserted span via
   ``echo_own_input``, so PII written by the model is PII the user did not supply;
@@ -42,29 +43,61 @@ def _model_segments(f: FilledText) -> list[tuple[int, int]]:
     return segments
 
 
+def _findings(f: FilledText, segments: list[tuple[int, int]]) -> list[tuple[int, int, str]]:
+    """Sensitive matches to redact, in ``f.text`` positions, merged where they overlap.
+
+    Each model segment is checked on its own, and the whole filled text is checked too: a
+    match that includes any model-written character counts, so text split around an
+    inserted value (``attacker{x1}@evil.com``) cannot hide from the detectors. A match
+    entirely inside gateway-inserted text is authorized and kept.
+    """
+    found: list[tuple[int, int, str]] = []
+    for a, b in segments:
+        found += [(a + s, a + e, kind) for s, e, kind in find_sensitive(f.text[a:b])]
+    found += [(s, e, kind) for s, e, kind in find_sensitive(f.text)
+              if any(s < b and a < e for a, b in segments)]
+    merged: list[tuple[int, int, str]] = []
+    for s, e, kind in sorted(found):
+        if merged and s < merged[-1][1]:
+            ms, me, mk = merged[-1]
+            merged[-1] = (ms, max(me, e), mk)
+        else:
+            merged.append((s, e, kind))
+    return merged
+
+
 def filter_output(f: FilledText, p: Principal, policy: Policy) -> tuple[str, Decision]:
     """Check model-written spans and leave gateway-inserted spans unchanged; redact or block. Spec section 4 step 9, I10."""
     start_t = time.perf_counter()
     mode = setting(policy, "output_controls.mode")
     marker = setting(policy, "markers.rejected")
-    found: list[str] = []
+    segments = _model_segments(f)
+    findings = _findings(f, segments)
+    found = [kind for _, _, kind in findings]
     leftovers = 0
+
+    def plain(a: int, b: int) -> str:
+        """Text between redactions: unbound placeholders in model-written parts become the marker."""
+        nonlocal leftovers
+        out, pos = [], a
+        for sa, sb in segments:
+            lo, hi = max(sa, a), min(sb, b)
+            if lo >= hi:
+                continue
+            out.append(f.text[pos:lo])  # gateway-inserted: unchanged
+            cleaned, n = PLACEHOLDER.subn(lambda _m: marker, f.text[lo:hi])
+            leftovers += n
+            out.append(cleaned)
+            pos = hi
+        out.append(f.text[pos:b])
+        return "".join(out)
+
     parts: list[str] = []
     pos = 0
-    for seg_start, seg_end in _model_segments(f):
-        parts.append(f.text[pos:seg_start])  # gateway-inserted: unchanged
-        segment = f.text[seg_start:seg_end]
-        out, cursor = [], 0
-        for s, e, kind in find_sensitive(segment):
-            found.append(kind)
-            out += [segment[cursor:s], REDACTED]
-            cursor = e
-        out.append(segment[cursor:])
-        cleaned, n = PLACEHOLDER.subn(lambda _m: marker, "".join(out))
-        leftovers += n
-        parts.append(cleaned)
-        pos = seg_end
-    parts.append(f.text[pos:])
+    for s, e, _ in findings:
+        parts += [plain(pos, s), REDACTED]
+        pos = e
+    parts.append(plain(pos, len(f.text)))
     ms = (time.perf_counter() - start_t) * 1000
 
     if found and mode == "block":

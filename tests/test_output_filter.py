@@ -182,13 +182,15 @@ def test_secret_in_the_answer_is_redacted_end_to_end(client: TestClient, stub: S
 
 
 def test_secret_in_send_email_arguments_is_redacted(client: TestClient, stub: StubModel, fake_steps) -> None:
-    stub.add(tool_call("send_email", {"to": "[EMAIL_1]", "body": f"The API key is {SECRET}, thanks."}))
+    # "to" must match the role's allow_pattern since tool authorization landed; a recipient the
+    # policy approved is not redacted, the body is still filtered.
+    stub.add(tool_call("send_email", {"to": "team@company.pl", "body": f"The API key is {SECRET}, thanks."}))
     r = client.post("/v1/chat/completions", json=ASK, headers={"Authorization": "Bearer demo-anna"})
 
     assert SECRET not in r.text
     (call,) = r.json()["choices"][0]["message"]["tool_calls"]
     args = json.loads(call["function"]["arguments"])
-    assert args == {"to": "[EMAIL_1]", "body": f"The API key is {REDACTED}, thanks."}
+    assert args == {"to": "team@company.pl", "body": f"The API key is {REDACTED}, thanks."}
     assert r.headers["x-acl-verdict"] == "redact"
 
 
@@ -201,3 +203,30 @@ def test_denied_tool_calls_are_not_filtered_and_never_returned(
     r = client.post("/v1/chat/completions", json=ASK, headers={"Authorization": "Bearer demo-anna"})
     assert SECRET not in r.text
     assert "tool_calls" not in r.json()["choices"][0]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Red-team regression: text split around an inserted value is checked as a whole.
+# ---------------------------------------------------------------------------
+
+
+def test_email_split_around_an_inserted_value_is_redacted() -> None:
+    from gateway.models import Binding, Vault
+    from gateway.outbound.fill import fill
+
+    b = Binding(name="{x1}", sql="", purpose="", expect="scalar", status="resolved", value=25, label="internal")
+    f = fill("Write to attacker{x1}@evil.com today.", {"{x1}": b}, Vault(), REDACT)
+    answer, decision = filter_output(f, ANNA, REDACT)
+    assert "attacker25@evil.com" not in answer and "evil.com" not in answer
+    assert decision.verdict == "redact"
+
+
+def test_inserted_email_next_to_model_text_is_kept() -> None:
+    from gateway.models import Binding, Vault
+    from gateway.outbound.fill import fill
+
+    b = Binding(name="{x1}", sql="", purpose="", expect="scalar", status="resolved",
+                value="piotr.grabowski@company.pl", label="sensitive")
+    f = fill("Email: {x1}.", {"{x1}": b}, Vault(), REDACT)
+    answer, decision = filter_output(f, ANNA, REDACT)
+    assert answer == "Email: piotr.grabowski@company.pl." and decision.verdict == "allow"

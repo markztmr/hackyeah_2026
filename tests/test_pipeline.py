@@ -87,7 +87,8 @@ def test_query_data_bindings_are_audited_without_values(
 
 def test_allowed_client_tool_call_reaches_the_client(client: TestClient, stub: StubModel, fake_steps) -> None:
     stub.add(tool_call("create_ticket", {"title": "Printer broken"}))
-    r = _ask(client, "Open a ticket.", tools=[{"type": "function", "function": {"name": "create_ticket"}}])
+    r = _ask(client, "Open a ticket.", {"Authorization": "Bearer demo-piotr"},  # create_ticket: not for interns
+             tools=[{"type": "function", "function": {"name": "create_ticket"}}])
 
     choice = r.json()["choices"][0]
     assert choice["finish_reason"] == "tool_calls"
@@ -280,3 +281,34 @@ def test_every_step_receives_the_same_policy_snapshot(
     stub.add(text("ok"))
     _ask(client, "Hi")
     assert len(seen) >= 8 and len(set(seen)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Red-team regression: literal values the model wrote into SQL never reach the audit
+# log; the SQL shape (tables, columns, parameters) stays readable. I8, I17.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("sql", "hidden"), [
+    ("SELECT name FROM employees e JOIN salaries s ON s.employee_id = e.id WHERE s.salary = 6200", "6200"),
+    ("SELECT name FROM employees WHERE name = 'Katarzyna Nowak'", "Katarzyna"),
+    ("SELECT name FROM employees WHERE name = CAST(x'4b6174' AS TEXT)", "4b6174"),
+    ("SELECT salary FROM salaries WHERE salary BETWEEN 6199 AND 6201 OR 1=1", "6199"),
+    ("SELECT FROM WHERE 6200 (", "6200"),  # unparsable
+])
+def test_audit_sql_keeps_no_literal_values(sql: str, hidden: str) -> None:
+    from gateway.models import Binding
+    from gateway.pipeline import _outcome
+
+    out = _outcome(Binding(name="{x1}", sql=sql, purpose="t", expect="scalar"))
+    assert hidden not in out.sql
+    assert "FROM" in out.sql.upper()
+
+
+def test_audit_sql_keeps_tables_columns_and_parameters() -> None:
+    from gateway.models import Binding
+    from gateway.pipeline import _outcome
+
+    out = _outcome(Binding(name="{x1}", sql="SELECT salary FROM salaries WHERE employee_id = :current_user",
+                           purpose="t", expect="scalar"))
+    assert "salaries" in out.sql and "employee_id" in out.sql and ":current_user" in out.sql

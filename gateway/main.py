@@ -161,8 +161,9 @@ def health(request: Request) -> JSONResponse:
 
 @app.get("/metrics")
 def metrics(request: Request) -> JSONResponse:
-    """Counters and latency summaries for the dashboard. Spec section 13."""
-    return JSONResponse(request.app.state.metrics.snapshot())
+    """Dashboard sections computed from the audit log. Spec section 12 'Dashboard panels', section 13."""
+    policy = _policy_store(request.app).snapshot()
+    return JSONResponse(audit.audit_metrics(audit.read_audit(policy), policy))
 
 
 @app.get("/policy/effective")

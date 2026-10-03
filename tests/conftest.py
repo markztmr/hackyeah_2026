@@ -1,8 +1,8 @@
 """Shared fixtures and test harness (spec section 14). Owner: Person 4.
 
 Config contract used by the fixtures: the gateway reads its policy file from
-``ACL_POLICY_PATH``, its database from ``ACL_DB_PATH`` and writes audit records to
-``ACL_AUDIT_PATH`` when they are set.
+``ACL_POLICY_PATH``, its database from ``ACL_DB_PATH``, writes audit records to
+``ACL_AUDIT_PATH`` and keeps budget counters in ``ACL_STATE_PATH`` when they are set.
 """
 from __future__ import annotations
 
@@ -51,6 +51,14 @@ def audit_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Every test writes audit records to its own temp file, never into the repo."""
     path = tmp_path / "audit.jsonl"
     monkeypatch.setenv("ACL_AUDIT_PATH", str(path))
+    return path
+
+
+@pytest.fixture(autouse=True)
+def state_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Every test keeps budget counters in its own temp state.db, never the repo's."""
+    path = tmp_path / "state.db"
+    monkeypatch.setenv("ACL_STATE_PATH", str(path))
     return path
 
 
@@ -166,15 +174,15 @@ INJECTION_PHRASE = "ignore previous instructions"
 def fake_steps(monkeypatch: pytest.MonkeyPatch) -> dict[str, Callable[..., Any]]:
     """Permissive stand-ins for pipeline steps whose modules have not landed yet.
 
-    Budget, inbound, judge, tool authorization, fill, usage and issued-value
-    recording allow everything. The injection check, signature feed and output
-    filter are real. query_data resolves every query to 1 (public). Tests
+    Inbound, judge and issued-value recording allow everything. Budget (in a temp
+    state.db), the injection check, signature feed, output filter, fill and tool
+    authorization are real. query_data resolves every query to 1 (public). Tests
     override one step with ``monkeypatch.setattr(gateway.pipeline, name, ...)``.
     Remove a fake here when its real module lands.
     """
     from gateway import pipeline
     from gateway.agency import loop
-    from gateway.models import Decision, FilledText, SanitizedRequest, ToolDecision, Vault
+    from gateway.models import Decision, SanitizedRequest, Vault
 
     def allow(stage: str, control: str) -> Decision:
         return Decision(stage, control, "allow", "")
@@ -188,17 +196,12 @@ def fake_steps(monkeypatch: pytest.MonkeyPatch) -> dict[str, Callable[..., Any]]
         return b
 
     fakes: dict[str, Callable[..., Any]] = {
-        "check_model_and_budget": lambda p, model, estimate, policy: allow("model_and_budget", "budgets"),
         "inspect_inbound": inspect_inbound,
         "judge": lambda text, policy, models=None: allow("input_checks", "semantic"),
-        "authorize_tool_call": lambda call, p, bindings, policy: ToolDecision(call.name, "allow", "fake", "Allowed."),
-        "fill": lambda text, bindings, vault, policy: FilledText(text=text),
-        "record_usage": lambda p, tokens, model, policy: None,
         "record_issued": lambda p, bindings, cache: None,
     }
     for name, fn in fakes.items():
         monkeypatch.setattr(pipeline, name, fn)
-    monkeypatch.setattr(loop, "check_model_and_budget", fakes["check_model_and_budget"])
     monkeypatch.setattr(loop, "validate_sql", lambda b, policy: b)
     monkeypatch.setattr(loop, "authorize", lambda b, p, policy: b)
     monkeypatch.setattr(loop, "execute", execute)

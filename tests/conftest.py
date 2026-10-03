@@ -166,9 +166,9 @@ INJECTION_PHRASE = "ignore previous instructions"
 def fake_steps(monkeypatch: pytest.MonkeyPatch) -> dict[str, Callable[..., Any]]:
     """Permissive stand-ins for pipeline steps whose modules have not landed yet.
 
-    Budget, inbound, signatures, judge, tool authorization, fill, output filter,
-    usage and issued-value recording allow everything; the injection check blocks
-    ``INJECTION_PHRASE``. query_data resolves every query to 1 (public). Tests
+    Budget, inbound, judge, tool authorization, fill, usage and issued-value
+    recording allow everything. The injection check, signature feed and output
+    filter are real. query_data resolves every query to 1 (public). Tests
     override one step with ``monkeypatch.setattr(gateway.pipeline, name, ...)``.
     Remove a fake here when its real module lands.
     """
@@ -183,11 +183,6 @@ def fake_steps(monkeypatch: pytest.MonkeyPatch) -> dict[str, Callable[..., Any]]
         messages = [m.model_dump(exclude_none=True) for m in req.messages]
         return SanitizedRequest(messages=messages, tools=list(req.tools or [])), Vault(), [allow("inbound", "masker")]
 
-    def check_injection(text: str, policy: Any) -> Decision:
-        if INJECTION_PHRASE in text.lower():
-            return Decision("input_checks", "injection", "block", "The prompt matches a known injection phrase.")
-        return allow("input_checks", "injection")
-
     def execute(b: Any, p: Any, policy: Any) -> Any:
         b.status, b.value, b.label = "resolved", 1, "public"
         return b
@@ -195,12 +190,9 @@ def fake_steps(monkeypatch: pytest.MonkeyPatch) -> dict[str, Callable[..., Any]]
     fakes: dict[str, Callable[..., Any]] = {
         "check_model_and_budget": lambda p, model, estimate, policy: allow("model_and_budget", "budgets"),
         "inspect_inbound": inspect_inbound,
-        "check_injection": check_injection,
-        "match_signatures": lambda text, surface, feed: allow("input_checks", "signatures"),
         "judge": lambda text, policy, models=None: allow("input_checks", "semantic"),
         "authorize_tool_call": lambda call, p, bindings, policy: ToolDecision(call.name, "allow", "fake", "Allowed."),
         "fill": lambda text, bindings, vault, policy: FilledText(text=text),
-        "filter_output": lambda f, p, policy: (f.text, allow("output_filter", "output_controls")),
         "record_usage": lambda p, tokens, model, policy: None,
         "record_issued": lambda p, bindings, cache: None,
     }

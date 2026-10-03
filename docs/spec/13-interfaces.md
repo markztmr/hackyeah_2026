@@ -98,7 +98,9 @@ Authentication failures return 401.
 authenticate(api_key: str, policy: Policy) -> Principal
 check_model_and_budget(p: Principal, model: str, estimate: int, policy: Policy) -> Decision
 inspect_inbound(req: ChatRequest, p: Principal, policy: Policy, cache: IssuedCache) -> tuple[SanitizedRequest, Vault, list[Decision]]
-match_signatures(text: str, surface: str, feed: SignatureFeed) -> Decision
+match_signatures(text: str, surface: str, feed: SignatureFeed, policy: Policy) -> Decision  # policy: mode for medium severity
+scan_tool_definitions(tools: list[dict], policy: Policy, feed: SignatureFeed) -> Decision  # gateway/inbound/injection.py, step 3d
+is_query_data_name(name: str) -> bool; safe_tool_label(name, index: int) -> str          # gateway/inbound/injection.py
 check_injection(text: str, policy: Policy) -> Decision
 judge(text: str, policy: Policy, *, models: ModelProvider | None = None) -> Decision
 run_tool_loop(req: SanitizedRequest, p: Principal, vault: Vault, policy: Policy, *, models: ModelProvider | None = None, model: str | None = None) -> LoopResult  # block -> LoopResult.block
@@ -137,6 +139,13 @@ Metrics().record(verdict, steps, total_ms); Metrics().snapshot() -> dict   # GET
 
 # gateway/audit.py
 read_audit(policy, since=None, until=None) -> list[dict]; export_csv(records) -> str
+
+# gateway/inbound/masker.py — building block of inspect_inbound (steps 3a-3b)
+mask_messages(messages: list[dict], policy: Policy) -> tuple[list[dict], Vault, list[Finding]]  # Finding: type, token, action
+masking_decisions(findings: list[Finding]) -> list[Decision]   # block / redact / log per control, or one allow
+find_sensitive(text: str) -> list[tuple[int, int, str]]          # shared with the output filter
+redact_sensitive(text: str) -> str                               # [REDACTED:<type>], for audit copies
+client_texts(messages: list[dict]) -> list[str]                  # every client-written field (content, name, tool_calls)
 
 # gateway/inbound/signatures.py
 parse_feed(raw: bytes) -> SignatureFeed; FeedStore(path).snapshot()/reload()/status()

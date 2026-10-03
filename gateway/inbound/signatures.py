@@ -7,9 +7,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
+import unicodedata
+from functools import lru_cache
 
-from gateway.models import Decision, Signature, SignatureFeed
-from gateway.policy.loader import ReloadingFile
+from gateway.models import Decision, Policy, Signature, SignatureFeed
+from gateway.policy.loader import ReloadingFile, setting
 
 SURFACES = frozenset({"input", "tool_result", "tool_definition", "model_output", "tool_args", "url"})
 SEVERITIES = frozenset({"high", "medium", "low"})
@@ -75,6 +78,50 @@ class FeedStore(ReloadingFile[SignatureFeed]):
         return {"signatures": len(value.signatures)}
 
 
-def match_signatures(text: str, surface: str, feed: SignatureFeed) -> Decision:
-    """Match text against feed entries that apply to this surface. Spec section 4 step 4, section 9."""
-    raise NotImplementedError
+_STAGE = {"input": "input_checks", "tool_result": "input_checks", "url": "input_checks",
+          "tool_definition": "inbound", "model_output": "output_filter", "tool_args": "output_filter"}
+_URL = re.compile(r"https?://[^\s'\"<>()\[\]{}`]+", re.I)
+_SEVERITY_RANK = {"block": 2, "log": 1}
+
+
+@lru_cache(maxsize=512)
+def _compiled(kind: str, pattern: str) -> re.Pattern[str]:
+    return re.compile(pattern if kind == "regex" else re.escape(pattern), 0 if kind == "regex" else re.I)
+
+
+def _strip_format_chars(text: str) -> str:
+    """Zero-width and other format characters are removed so they cannot split a pattern."""
+    return "".join(c for c in text if unicodedata.category(c) != "Cf")
+
+
+def match_signatures(text: str, surface: str, feed: SignatureFeed, policy: Policy) -> Decision:
+    """Match text against feed entries that apply to this surface. Spec section 4 step 4, section 9.
+
+    URLs found in the text are also matched against entries for the ``url`` surface.
+    Severity: high blocks, medium follows ``prompt_controls.signatures.mode``, low logs;
+    mode ``off`` disables the control. The reason lists signature IDs, never matched text.
+    """
+    start = time.perf_counter()
+    stage = _STAGE.get(surface, "input_checks")
+    mode = setting(policy, "prompt_controls.signatures.mode")
+    hits: list[tuple[str, str]] = []  # (action, id)
+    if mode != "off" and text:
+        clean = _strip_format_chars(text)
+        urls = _URL.findall(clean)
+        for sig in feed.signatures:
+            if surface in sig.applies_to:
+                found = _compiled(sig.type, sig.pattern).search(clean) is not None
+            else:
+                found = False
+            if not found and "url" in sig.applies_to:
+                found = any(_compiled(sig.type, sig.pattern).search(u) for u in urls)
+            if found:
+                action = {"high": "block", "medium": mode, "low": "log"}[sig.severity]
+                hits.append((action, sig.id))
+    ms = (time.perf_counter() - start) * 1000
+    if not hits:
+        return Decision(stage, "signatures", "allow", "", ms)
+    verdict = max((a for a, _ in hits), key=_SEVERITY_RANK.__getitem__)
+    ids = ", ".join(dict.fromkeys(i for _, i in hits))
+    what = "blocked" if verdict == "block" else "logged"
+    return Decision(stage, "signatures", verdict, f"Matched attack signature(s) {ids} (feed {feed.version}); {what}.", ms)  # type: ignore[arg-type]

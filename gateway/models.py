@@ -72,6 +72,18 @@ class Vault(_Sealed):
         self._masks: dict[str, str] = {}
         self._placeholders: dict[str, str] = {}
 
+    def add_mask(self, token: str, value: str) -> None:
+        """Store the original behind a mask token such as ``[EMAIL_1]``."""
+        self._masks[token] = value
+
+    def mask(self, token: str) -> str | None:
+        """The original behind a mask token, or None. Only for outbound restore (echo_own_input)."""
+        return self._masks.get(token)
+
+    @property
+    def mask_count(self) -> int:
+        return len(self._masks)
+
     def __repr__(self) -> str:
         return f"Vault(mask_tokens={len(self._masks)}, placeholders={len(self._placeholders)})"
 
@@ -192,10 +204,14 @@ class ChatResponse(BaseModel):
 
 @dataclass(slots=True)
 class Finding:
-    """One inbound match: what kind and which mask token replaced it. No value."""
+    """One inbound match: what kind, which mask token replaced it and the action. No value.
+
+    ``token`` is empty when the control only logs (the text is left unchanged).
+    """
 
     type: str
     token: str
+    action: Literal["redact", "block", "log"] = "redact"
 
 
 @dataclass(slots=True)

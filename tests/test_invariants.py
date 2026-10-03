@@ -257,10 +257,35 @@ def test_denial_reveals_nothing() -> None:
     pytest.fail("not implemented")
 
 
-@pytest.mark.skip(reason="needs gateway/outbound/output_filter.py and gateway/pipeline.py")
-def test_output_filter_runs_on_every_answer_and_tool_call() -> None:
+def test_output_filter_runs_on_every_answer_and_tool_call(client, stub, fake_steps, monkeypatch) -> None:  # noqa: ANN001
     """I15. The output filter runs on every final answer and every allowed tool call's arguments."""
-    pytest.fail("not implemented")
+    from gateway import pipeline
+    from gateway.llm.client import text, tool_call
+    from gateway.models import ToolDecision
+
+    filtered: list[str] = []
+    real = pipeline.filter_output
+
+    def spy(f, p, pol):  # noqa: ANN001, ANN202
+        filtered.append(f.text)
+        return real(f, p, pol)
+
+    monkeypatch.setattr(pipeline, "filter_output", spy)
+    monkeypatch.setattr(pipeline, "authorize_tool_call", lambda c, p, b, pol: ToolDecision(
+        c.name, "allow" if c.name == "create_ticket" else "deny", "role", ""))
+    anna = {"Authorization": "Bearer demo-anna"}
+    body = {"model": "llama3.2", "messages": [{"role": "user", "content": "Hi"}]}
+
+    stub.add(text("plain answer"))
+    client.post("/v1/chat/completions", json=body, headers=anna)
+    assert filtered == ["plain answer"]
+
+    filtered.clear()
+    stub.add(text("Done.") + tool_call("create_ticket", {"title": "T1", "tags": ["a", "b"], "n": 3})
+             + tool_call("send_email", {"to": "x", "body": "denied, never sent"}))
+    client.post("/v1/chat/completions", json=body, headers=anna)
+    # The answer, then every string argument of the allowed call; the denied call is never returned.
+    assert filtered == ["Done.", "T1", "a", "b"]
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +368,9 @@ def test_every_request_writes_exactly_one_audit_record(client, stub, fake_steps,
     records = audit_records()
     assert len(records) == 5
     assert len({r["request_id"] for r in records}) == 5
-    assert [r["verdict"] for r in records] == ["allow", "block", "block", "block", "block"]
+    # The first answer is "allow", or "redact" while the fake fill leaves {x1} for the output filter.
+    assert records[0]["verdict"] in ("allow", "redact")
+    assert [r["verdict"] for r in records[1:]] == ["block", "block", "block", "block"]
     log_text = audit_log.read_text(encoding="utf-8")
     assert secret not in log_text
     assert value not in log_text

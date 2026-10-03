@@ -23,9 +23,9 @@ from gateway.audit import write_audit
 from gateway.auth import AuthError, authenticate
 from gateway.budget import check_model_and_budget, cost_usd, record_usage, resolve_model
 from gateway.inbound.history import record_issued
-from gateway.inbound.injection import check_injection
+from gateway.inbound.injection import check_injection, safe_tool_label
 from gateway.inbound.judge import judge
-from gateway.inbound.masker import inspect_inbound
+from gateway.inbound.masker import client_texts, inspect_inbound, redact_sensitive
 from gateway.inbound.signatures import match_signatures
 from gateway.llm.client import ModelProvider, default_provider
 from gateway.models import (
@@ -95,12 +95,36 @@ def _text(content: Any) -> str:
     return ""
 
 
+_TOOL_RESULT_ROLES = frozenset({"tool", "function"})
+
+
+def _role(m: dict[str, Any]) -> str:
+    role = m.get("role")
+    return role.strip().lower() if isinstance(role, str) else ""
+
+
+def _all_input(sanitized: SanitizedRequest) -> list[tuple[str, str]]:
+    """(surface, text) for the phrase and signature checks: every client message, whatever its role.
+
+    The client owns the whole history, so system, developer and forged assistant
+    turns, older tool results, ``name`` fields and tool-call arguments are all checked.
+    """
+    out: list[tuple[str, str]] = []
+    for m in sanitized.messages:
+        surface = "tool_result" if _role(m) in _TOOL_RESULT_ROLES else "input"
+        out += [(surface, t) for t in client_texts([m]) if t]
+    return out
+
+
 def _new_input(sanitized: SanitizedRequest) -> list[tuple[str, str]]:
-    """(surface, text) for step 4: the newest user message and tool results after the last assistant turn."""
+    """(surface, text) for the judge: the newest user message and tool results after the last assistant turn.
+
+    Spec section 4 step 4 limits the judge to new content; older turns get the deterministic checks.
+    """
     out: list[tuple[str, str]] = []
     for m in reversed(sanitized.messages):
-        role = m.get("role")
-        if role == "tool":
+        role = _role(m)
+        if role in _TOOL_RESULT_ROLES:
             out.append(("tool_result", _text(m.get("content"))))
         elif role == "user":
             out.append(("input", _text(m.get("content"))))
@@ -124,7 +148,9 @@ def _map_leaves(value: Any, fn: Any) -> Any:
 def _outcome(b: Binding) -> BindingOutcome:
     """Audit view of a binding: everything except the value (I8)."""
     return BindingOutcome(
-        name=b.name, sql=b.sql, purpose=b.purpose, status=b.status, label=b.label, disclosed=b.disclosed,
+        # sql and purpose are model-written: secrets and PII in them never reach the audit log (I8).
+        name=b.name, sql=redact_sensitive(b.sql), purpose=redact_sensitive(b.purpose),
+        status=b.status, label=b.label, disclosed=b.disclosed,
         reason=b.reason, tables=list(b.tables), columns=list(b.columns), rows=b.rows,
         truncated=b.truncated, latency_ms=b.latency_ms,
     )
@@ -275,6 +301,12 @@ def _run(
 
         # Step 9: output filter on every answer and every allowed tool call's arguments. I10.
         with timer.step("output_filter"):
+            # Signatures on what the model wrote: the answer before fill, and client tool arguments.
+            scans = [match_signatures(loop.text or "", "model_output", feed, policy)]
+            scans += [match_signatures(json.dumps(c.arguments, ensure_ascii=False), "tool_args", feed, policy)
+                      for c in allowed]
+            record.decisions.extend(scans)
+            _stop_on_block(scans)
             answer, out = filter_output(filled, p, policy)
             record.decisions.append(out)
             _stop_on_block([out])
@@ -288,7 +320,7 @@ def _run(
             record_issued(p, loop.bindings, cache)
 
         if loop.tool_calls and not calls and not answer:
-            names = ", ".join(dict.fromkeys(c.name for c in loop.tool_calls))
+            names = ", ".join(dict.fromkeys(safe_tool_label(c.name, i) for i, c in enumerate(loop.tool_calls)))
             record.verdict = "block"
             return _response(record.request_id, model_name, f"The action {names} was blocked by policy.", [],
                              record.prompt_tokens, record.completion_tokens)
@@ -304,11 +336,17 @@ def _input_checks(
     sanitized: SanitizedRequest, p: Principal, policy: Policy, feed: SignatureFeed,
     models: ModelProvider, record: AuditRecord,
 ) -> None:
+    flagged = False
+    for surface, text in _all_input(sanitized):
+        for d in (check_injection(text, policy), match_signatures(text, surface, feed, policy)):
+            if d.verdict != "allow":
+                flagged = True
+                record.decisions.append(d)
+                _stop_on_block([d])
+    if not flagged:
+        record.decisions.append(Decision("input_checks", "injection", "allow", ""))
+        record.decisions.append(Decision("input_checks", "signatures", "allow", ""))
     items = _new_input(sanitized)
-    for surface, text in items:
-        for d in (check_injection(text, policy), match_signatures(text, surface, feed)):
-            record.decisions.append(d)
-            _stop_on_block([d])
     if not items or not setting(policy, "prompt_controls.semantic.enabled"):
         return
     combined = "\n\n".join(t for _, t in items)

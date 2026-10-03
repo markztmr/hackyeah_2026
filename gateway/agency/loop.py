@@ -19,6 +19,7 @@ from gateway.binding.disclosure import disclose
 from gateway.binding.executor import execute
 from gateway.binding.sql_validator import validate_sql
 from gateway.budget import check_model_and_budget
+from gateway.inbound.injection import is_query_data_name
 from gateway.llm.client import ModelError, ModelProvider, ModelReply, ModelToolCall, call_model, default_provider
 from gateway.llm.prompts import QUERY_DATA_TOOL, build_system_message, load_schema
 from gateway.models import (
@@ -170,7 +171,7 @@ def run_tool_loop(
         result.decisions.append(Decision(STAGE, control, "block", reason))
         return result
 
-    if any(_tool_name(t) == QUERY_DATA for t in req.tools):
+    if any(is_query_data_name(_tool_name(t) or "") for t in req.tools):
         return block("tool_definitions", "A client tool is named query_data, which collides with the built-in tool.")
 
     client = (models or default_provider())("answer", policy)

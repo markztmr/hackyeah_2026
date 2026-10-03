@@ -315,7 +315,7 @@ def test_client_tool_calls_are_authorized_before_the_client_sees_them(client, st
     def returned(key: str, *turns: object) -> list[tuple[str, dict]]:
         stub.add(*turns)
         r = client.post("/v1/chat/completions", headers={"Authorization": f"Bearer {key}"},
-                        json={"model": "llama3.2", "messages": [{"role": "user", "content": "Go."}], "tools": tools})
+                        json={"model": "qwen2.5:3b", "messages": [{"role": "user", "content": "Go."}], "tools": tools})
         calls = r.json()["choices"][0]["message"].get("tool_calls") or []
         return [(c["function"]["name"], json.loads(c["function"]["arguments"])) for c in calls]
 
@@ -427,7 +427,7 @@ def test_output_filter_runs_on_every_answer_and_tool_call(client, stub, fake_ste
     monkeypatch.setattr(pipeline, "authorize_tool_call", lambda c, p, b, pol: ToolDecision(
         c.name, "allow" if c.name == "create_ticket" else "deny", "role", ""))
     anna = {"Authorization": "Bearer demo-anna"}
-    body = {"model": "llama3.2", "messages": [{"role": "user", "content": "Hi"}]}
+    body = {"model": "qwen2.5:3b", "messages": [{"role": "user", "content": "Hi"}]}
 
     stub.add(text("plain answer"))
     client.post("/v1/chat/completions", json=body, headers=anna)
@@ -474,7 +474,7 @@ def test_each_request_uses_one_policy_version(client, stub, fake_steps, policy, 
     monkeypatch.setattr(pipeline, "fill", lambda t, b, v, pol: seen_after_model.append(pol.version_hash) or real_fill(t, b, v, pol))
 
     stub.add(text("first"), text("second"))
-    body = {"model": "llama3.2", "messages": [{"role": "user", "content": "Hi"}]}
+    body = {"model": "qwen2.5:3b", "messages": [{"role": "user", "content": "Hi"}]}
     client.post("/v1/chat/completions", json=body, headers={"Authorization": "Bearer demo-anna"})
     client.post("/v1/chat/completions", json=body, headers={"Authorization": "Bearer demo-anna"})
 
@@ -505,7 +505,7 @@ def test_every_request_writes_exactly_one_audit_record(client, stub, fake_steps,
     anna = {"Authorization": "Bearer demo-anna"}
 
     def ask(content: str, headers: dict[str, str] = anna) -> int:
-        body = {"model": "llama3.2", "messages": [{"role": "user", "content": content}]}
+        body = {"model": "qwen2.5:3b", "messages": [{"role": "user", "content": content}]}
         return client.post("/v1/chat/completions", json=body, headers=headers).status_code
 
     sql = {"sql": "SELECT salary FROM salaries WHERE employee_id = :current_user", "purpose": "p", "expect": "scalar"}
@@ -557,7 +557,7 @@ def test_budget_is_checked_before_every_model_call_and_query(  # noqa: ANN001
 
     def ask() -> str:
         r = client.post("/v1/chat/completions", headers={"Authorization": "Bearer demo-anna"},
-                        json={"model": "llama3.2", "messages": [{"role": "user", "content": "Hi."}]})
+                        json={"model": "qwen2.5:3b", "messages": [{"role": "user", "content": "Hi."}]})
         return r.headers["x-acl-verdict"]
 
     # Within budget: judge, two answer calls and one query run.
@@ -568,7 +568,7 @@ def test_budget_is_checked_before_every_model_call_and_query(  # noqa: ANN001
 
     # Exhausted before the request: no judge, no model call, no query.
     now[0] += 86_400
-    budget.record_usage(anna, 20_000, "llama3.2", policy)
+    budget.record_usage(anna, 20_000, "qwen2.5:3b", policy)
     judged.clear(), stub.calls.clear(), queries.clear()
     stub.add(query, text("Done."))
     assert ask() == "block"
@@ -577,7 +577,7 @@ def test_budget_is_checked_before_every_model_call_and_query(  # noqa: ANN001
 
     # Exhausted by the first loop call: its query runs, the next iteration (and its query) never does.
     now[0] += 86_400
-    budget.record_usage(anna, 20_000 - first_call, "llama3.2", policy)
+    budget.record_usage(anna, 20_000 - first_call, "qwen2.5:3b", policy)
     stub.add(query, query, text("Done."))
     assert ask() == "block"
     assert (len(stub.calls), len(queries)) == (1, 1)

@@ -14,7 +14,7 @@ Run 10 fixed prompts against `llama3.2` and `qwen2.5:3b` through Ollama's OpenAI
 questions that call `query_data`, share of SQL that passes the validator, share of answers
 that use the placeholder, and median latency. The best model becomes `models.answer`.
 
-- [ ] Hour-1 model test, result recorded in README
+- [x] Hour-1 model test, result recorded in README
 - [ ] Repo skeleton, stub model, `pytest` running green on an empty suite
 - [ ] Deadline confirmed with organizers
 

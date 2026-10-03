@@ -17,7 +17,7 @@ STRICT_DEFAULTS: dict[str, Any] = {
         "answer": {
             "provider": "ollama",
             "base_url": "http://localhost:11434/v1",
-            "name": "llama3.2",
+            "name": "qwen2.5:3b",
             "trust": "local",
             "max_tokens": 512,
             "timeout_s": 30.0,

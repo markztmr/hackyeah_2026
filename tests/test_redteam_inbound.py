@@ -36,7 +36,7 @@ NBSP = " "   # no-break space
 
 
 def _chat(client: TestClient, messages: list[dict[str, Any]], **body: Any):
-    return client.post("/v1/chat/completions", json={"model": "llama3.2", "messages": messages, **body}, headers=ANNA)
+    return client.post("/v1/chat/completions", json={"model": "qwen2.5:3b", "messages": messages, **body}, headers=ANNA)
 
 
 def _masked(role: str, content: Any) -> str:

@@ -242,7 +242,7 @@ TRANSFER = {"type": "function", "function": {"name": "transfer_funds", "descript
 
 def _ask(client: TestClient, key: str, tools: list[dict[str, Any]]) -> dict[str, Any]:
     r = client.post("/v1/chat/completions", headers={"Authorization": f"Bearer {key}"},
-                    json={"model": "llama3.2", "messages": [{"role": "user", "content": "Do it."}], "tools": tools})
+                    json={"model": "qwen2.5:3b", "messages": [{"role": "user", "content": "Do it."}], "tools": tools})
     assert r.status_code == 200
     return r.json()["choices"][0]["message"]
 
@@ -268,7 +268,7 @@ def test_pipeline_anna_transfer_funds_is_removed(client: TestClient, stub: StubM
                                                   audit_records: Any) -> None:
     stub.add(tool_call("transfer_funds", {"amount": 100}))
     r = client.post("/v1/chat/completions", headers={"Authorization": "Bearer demo-anna"},
-                    json={"model": "llama3.2", "messages": [{"role": "user", "content": "Pay."}], "tools": [TRANSFER]})
+                    json={"model": "qwen2.5:3b", "messages": [{"role": "user", "content": "Pay."}], "tools": [TRANSFER]})
     msg = r.json()["choices"][0]["message"]
     assert not msg.get("tool_calls")
     assert msg["content"] == "The action transfer_funds was blocked by policy."

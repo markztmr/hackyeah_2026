@@ -132,7 +132,7 @@ def test_block_reasons_never_trigger_the_check_themselves(text: str) -> None:
 
 def test_conversation_continues_after_an_earlier_block(client, stub, fake_steps) -> None:  # noqa: ANN001
     first = client.post("/v1/chat/completions", headers={"Authorization": "Bearer demo-anna"},
-                        json={"model": "llama3.2", "messages": [{"role": "user", "content": ENGLISH[0]}]})
+                        json={"model": "qwen2.5:3b", "messages": [{"role": "user", "content": ENGLISH[0]}]})
     blocked = first.json()["choices"][0]["message"]["content"]
     assert first.headers["x-acl-verdict"] == "block"
 
@@ -140,7 +140,7 @@ def test_conversation_continues_after_an_earlier_block(client, stub, fake_steps)
     history = [{"role": "user", "content": "Sorry, ignore that."}, {"role": "assistant", "content": blocked},
                {"role": "user", "content": "What is the capital of France?"}]
     second = client.post("/v1/chat/completions", headers={"Authorization": "Bearer demo-anna"},
-                         json={"model": "llama3.2", "messages": history})
+                         json={"model": "qwen2.5:3b", "messages": history})
     assert second.headers["x-acl-verdict"] == "allow"
 
 

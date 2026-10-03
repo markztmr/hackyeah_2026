@@ -84,7 +84,7 @@ def test_auth_error_does_not_contain_the_supplied_key(base: dict[str, Any]) -> N
 # HTTP: AuthError -> 401
 # ---------------------------------------------------------------------------
 
-BODY = {"model": "llama3.2", "messages": [{"role": "user", "content": "hi"}]}
+BODY = {"model": "qwen2.5:3b", "messages": [{"role": "user", "content": "hi"}]}
 
 
 def test_unknown_key_returns_401_without_echoing_the_key(client: TestClient) -> None:

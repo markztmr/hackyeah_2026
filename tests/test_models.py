@@ -34,7 +34,7 @@ def test_allowed_model_is_used(base: dict[str, Any]) -> None:
     assert d.verdict == "allow"
 
 
-@pytest.mark.parametrize("requested", ["gpt-4o", "LLAMA3.2", "llama3.2:latest", "llama3.2 ", ""])
+@pytest.mark.parametrize("requested", ["gpt-4o", "llama3.2", "QWEN2.5:3B", "qwen2.5:3b:latest", "qwen2.5:3b ", ""])
 def test_unlisted_model_is_blocked(base: dict[str, Any], requested: str) -> None:
     model, d = resolve_model(requested, _policy(base))
     assert model is None
@@ -51,14 +51,14 @@ def test_block_from_check_model_and_budget_happens_before_any_budget_work(base: 
 def test_unlisted_model_is_substituted_with_the_answer_model(base: dict[str, Any]) -> None:
     base["models"]["on_unlisted"] = "substitute"
     model, d = resolve_model("gpt-4o", _policy(base))
-    assert model == "llama3.2"
+    assert model == "qwen2.5:3b"
     assert d.verdict == "log"
-    assert "llama3.2" in d.reason
+    assert "qwen2.5:3b" in d.reason
 
 
 def test_substitute_is_blocked_when_the_answer_model_is_not_allowed(base: dict[str, Any]) -> None:
     base["models"]["on_unlisted"] = "substitute"
-    base["models"]["allowed"] = [m for m in base["models"]["allowed"] if m["name"] != "llama3.2"]
+    base["models"]["allowed"] = [m for m in base["models"]["allowed"] if m["name"] != "qwen2.5:3b"]
     model, d = resolve_model("gpt-4o", _policy(base))
     assert model is None
     assert d.verdict == "block"
@@ -66,8 +66,15 @@ def test_substitute_is_blocked_when_the_answer_model_is_not_allowed(base: dict[s
 
 def test_empty_allowlist_blocks_every_model(base: dict[str, Any]) -> None:
     del base["models"]["allowed"]
+    model, d = resolve_model("qwen2.5:3b", _policy(base))
+    assert (model, d.verdict) == (None, "block")
+
+
+def test_llama32_is_not_an_allowed_model(base: dict[str, Any]) -> None:
+    """qwen2.5:3b won the hour-1 test (README 'Model choice'); llama3.2 is no longer served."""
     model, d = resolve_model("llama3.2", _policy(base))
     assert (model, d.verdict) == (None, "block")
+    assert [m["name"] for m in base["models"]["allowed"]] == ["qwen2.5:3b", "qwen2.5:1.5b"]
 
 
 def test_block_reason_does_not_repeat_the_requested_name(base: dict[str, Any]) -> None:

@@ -62,8 +62,8 @@ def test_every_call_sets_max_tokens_from_the_policy(shipped, purpose: str, max_t
 def test_call_uses_the_policy_model_name_unless_one_is_given(shipped) -> None:
     stub = StubModel([text("a"), text("b")])
     call_model(stub, "answer", shipped, USER)
-    call_model(stub, "answer", shipped, USER, model="qwen2.5:3b")
-    assert [c.model for c in stub.calls] == ["llama3.2", "qwen2.5:3b"]
+    call_model(stub, "answer", shipped, USER, model="qwen2.5:1.5b")
+    assert [c.model for c in stub.calls] == ["qwen2.5:3b", "qwen2.5:1.5b"]
 
 
 def test_reply_carries_content_tool_calls_and_usage(shipped) -> None:
@@ -115,7 +115,7 @@ def test_reply_repr_never_shows_content_or_arguments(shipped) -> None:
 
 def _completion_body(**overrides: Any) -> dict[str, Any]:
     body: dict[str, Any] = {
-        "id": "c1", "object": "chat.completion", "created": 0, "model": "llama3.2",
+        "id": "c1", "object": "chat.completion", "created": 0, "model": "qwen2.5:3b",
         "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "Hi."}}],
         "usage": {"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 9},
     }
@@ -143,7 +143,7 @@ def test_real_client_posts_to_base_url_with_max_tokens_and_tools(shipped) -> Non
     assert str(seen[0].url) == "http://ollama.test/v1/chat/completions"
     sent = json.loads(seen[0].content)
     assert sent["max_tokens"] == 512
-    assert sent["model"] == "llama3.2"
+    assert sent["model"] == "qwen2.5:3b"
     assert sent["tools"] == tools
     assert (reply.content, reply.prompt_tokens, reply.completion_tokens) == ("Hi.", 7, 2)
 

@@ -304,7 +304,7 @@ def test_vault_cannot_be_serialized_or_iterated() -> None:
         "Our secret: teamwork and patience.",
         "Password: required for every account.",
         "Set max_tokens: 512 in the config.",
-        '{"model": "llama3.2", "max_tokens": 512}',
+        '{"model": "qwen2.5:3b", "max_tokens": 512}',
     ],
 )
 def test_credential_words_in_prose_are_not_masked(prose: str) -> None:

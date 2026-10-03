@@ -63,7 +63,7 @@ models:
   answer:
     provider: ollama            # ollama | openai_compatible
     base_url: http://localhost:11434/v1
-    name: llama3.2              # final choice from the hour-1 test
+    name: "qwen2.5:3b"          # final choice from the hour-1 test
     trust: local                # local | external
     max_tokens: 512
     timeout_s: 30                # seconds per model call
@@ -74,7 +74,6 @@ models:
     max_tokens: 32
     timeout_s: 10
   allowed:                      # digest from Ollama /api/tags; mismatch = model blocked
-    - { name: llama3.2,       digest: "sha256:<pin>" }
     - { name: "qwen2.5:3b",   digest: "sha256:<pin>" }
     - { name: "qwen2.5:1.5b", digest: "sha256:<pin>" }
   on_unlisted: block            # block | substitute (use models.answer)
@@ -182,7 +181,6 @@ budgets:
   store: state.db
 
 pricing_per_1k_tokens:            # notional for local compute; real for external
-  llama3.2: 0.0002
   "qwen2.5:3b": 0.0002
   "qwen2.5:1.5b": 0.0001
   gpt-4o-mini: 0.0006

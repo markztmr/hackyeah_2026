@@ -53,9 +53,9 @@ def test_panels_show_posture_feed_and_totals(
 ) -> None:
     stub.add(text("Paris."))
     client.post("/v1/chat/completions", headers=ANNA,
-                json={"model": "llama3.2", "messages": [{"role": "user", "content": "Capital?"}]})
+                json={"model": "qwen2.5:3b", "messages": [{"role": "user", "content": "Capital?"}]})
     client.post("/v1/chat/completions", headers=ANNA,
-                json={"model": "llama3.2", "messages": [{"role": "user", "content": INJECTION_PHRASE}]})
+                json={"model": "qwen2.5:3b", "messages": [{"role": "user", "content": INJECTION_PHRASE}]})
     _through(client, monkeypatch)
     at = _run()
 

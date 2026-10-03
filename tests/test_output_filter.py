@@ -169,7 +169,7 @@ def test_block_mode_still_only_replaces_leftover_placeholders() -> None:
 # Through the pipeline: the answer and client tool arguments
 # ---------------------------------------------------------------------------
 
-ASK = {"model": "llama3.2", "messages": [{"role": "user", "content": "Mail my boss."}],
+ASK = {"model": "qwen2.5:3b", "messages": [{"role": "user", "content": "Mail my boss."}],
        "tools": [{"type": "function", "function": {"name": "send_email", "description": "Send an email."}}]}
 
 

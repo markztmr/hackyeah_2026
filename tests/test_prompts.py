@@ -54,6 +54,7 @@ def test_system_message_says_the_current_parameters_mean_only_the_asker() -> Non
     assert "department = 'sales'" in msg
     assert "title = 'CEO'" in msg
     assert "never :current_user" in msg
+    assert "two query_data calls" in msg  # qwen2.5:3b packed two SELECTs into one call
 
 
 def test_system_message_contains_no_database_values(db: Path) -> None:

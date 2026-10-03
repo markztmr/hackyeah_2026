@@ -16,7 +16,7 @@ TOOLS = [{"type": "function", "function": {"name": "send_email", "description": 
 
 
 def _call(stub: StubModel, messages=USER, tools=TOOLS) -> ChatCompletion:
-    return stub.complete(messages, tools, model="llama3.2", max_tokens=512)
+    return stub.complete(messages, tools, model="qwen2.5:3b", max_tokens=512)
 
 
 def test_stub_satisfies_the_model_client_interface() -> None:
@@ -35,7 +35,7 @@ def test_text_response_is_a_final_openai_completion() -> None:
     assert r.choices[0].finish_reason == "stop"
     assert r.choices[0].message.content == "Your salary is {x1} PLN."
     assert r.choices[0].message.tool_calls is None
-    assert r.model == "llama3.2"
+    assert r.model == "qwen2.5:3b"
 
 
 def test_tool_call_response_carries_name_and_json_arguments() -> None:

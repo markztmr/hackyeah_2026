@@ -156,7 +156,7 @@ def principals_seen(monkeypatch: pytest.MonkeyPatch, stub: StubModel) -> Callabl
 
     def run(api_key: str, messages: list[dict[str, Any]]) -> list[Any]:
         policy = load_policy(REPO_ROOT / "policy.yaml")
-        req = ChatRequest(model="llama3.2", messages=messages)
+        req = ChatRequest(model="qwen2.5:3b", messages=messages)
         try:
             pipeline.run_pipeline(api_key, req, policy, SignatureFeed(version="test"), IssuedCache())
         except GatewayError:

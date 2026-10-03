@@ -55,7 +55,7 @@ def _query(sql: str = "SELECT name FROM employees") -> Any:
 
 def _post(client: TestClient, key: str, tools: list[dict[str, Any]]) -> Any:
     return client.post("/v1/chat/completions", headers={"Authorization": f"Bearer {key}"},
-                       json={"model": "llama3.2", "messages": [{"role": "user", "content": "Do it."}],
+                       json={"model": "qwen2.5:3b", "messages": [{"role": "user", "content": "Do it."}],
                              "tools": tools})
 
 

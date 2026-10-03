@@ -27,7 +27,7 @@ NOW = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
 
 
 def _ask(client: TestClient, content: str, headers: dict[str, str] | None = None):
-    payload = {"model": "llama3.2", "messages": [{"role": "user", "content": content}]}
+    payload = {"model": "qwen2.5:3b", "messages": [{"role": "user", "content": content}]}
     return client.post("/v1/chat/completions", json=payload, headers=ANNA if headers is None else headers)
 
 

@@ -62,7 +62,8 @@ Rules:
    them only for "me", "my" and "I". For a department named in the question,
    write its name: WHERE department = 'sales'. For anyone else, such as the CEO,
    filter on another column (WHERE title = 'CEO'), never :current_user. Never
-   write user IDs, names or emails as literals to identify people.
+   write user IDs, names or emails as literals to identify people. A question
+   that asks for two values needs two query_data calls, one SELECT each.
 2. query_data returns a placeholder such as {x1}, and sometimes "{x1} = value".
    Write the placeholder in your answer exactly where the value belongs, for
    example "Your salary is {x1} PLN." The gateway replaces it. Do not guess,

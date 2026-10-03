@@ -21,7 +21,7 @@ import httpx
 from openai import APIConnectionError, APIStatusError, OpenAI
 
 USERS = {"anna": "demo-anna", "marek": "demo-marek", "piotr": "demo-piotr"}
-MODEL = "llama3.2"
+MODEL = "qwen2.5:3b"  # the gateway's answer model (policy.yaml models.answer)
 MAX_TOOL_ROUNDS = 5  # an agent loop is bounded too
 BLOCK_PREFIX = "Request blocked: "
 

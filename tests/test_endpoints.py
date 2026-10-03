@@ -15,7 +15,7 @@ from gateway.llm import client as llm
 from gateway.llm.client import StubModel, text
 
 ANNA = {"Authorization": "Bearer demo-anna"}
-BODY = {"model": "llama3.2", "messages": [{"role": "user", "content": "Hi"}]}
+BODY = {"model": "qwen2.5:3b", "messages": [{"role": "user", "content": "Hi"}]}
 
 
 def _bump(path: Path, content: str) -> None:
@@ -34,7 +34,7 @@ def test_models_lists_the_allowed_models_in_openai_format(client: TestClient) ->
     assert r.status_code == 200
     body = r.json()
     assert body["object"] == "list"
-    assert [m["id"] for m in body["data"]] == ["llama3.2", "qwen2.5:3b", "qwen2.5:1.5b"]
+    assert [m["id"] for m in body["data"]] == ["qwen2.5:3b", "qwen2.5:1.5b"]
     assert all(m["object"] == "model" for m in body["data"])
 
 
@@ -59,7 +59,7 @@ def test_health_reports_versions_model_reachability_and_no_error(
     assert body["policy"]["error"] is None
     assert body["feed"]["version"]
     assert body["feed"]["error"] is None
-    assert body["models"]["answer"] == {"name": "llama3.2", "base_url": "http://localhost:11434/v1", "reachable": True}
+    assert body["models"]["answer"] == {"name": "qwen2.5:3b", "base_url": "http://localhost:11434/v1", "reachable": True}
     assert body["models"]["judge"]["reachable"] is False
     assert body["status"] == "degraded"
 

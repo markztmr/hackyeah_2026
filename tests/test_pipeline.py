@@ -24,7 +24,7 @@ SECRET = "48211"
 
 
 def _ask(client: TestClient, content: str, headers: dict[str, str] | None = None, **body: Any):
-    payload = {"model": "llama3.2", "messages": [{"role": "user", "content": content}], **body}
+    payload = {"model": "qwen2.5:3b", "messages": [{"role": "user", "content": content}], **body}
     return client.post("/v1/chat/completions", json=payload, headers=ANNA if headers is None else headers)
 
 
@@ -54,7 +54,7 @@ def test_plain_question_returns_an_answer(client: TestClient, stub: StubModel, f
     assert record["request_id"] == body["id"]
     assert record["verdict"] == "allow"
     assert (record["user_id"], record["role"], record["ai_data_policy"]) == ("anna", "intern", "deny")
-    assert record["answer_model"] == "llama3.2"
+    assert record["answer_model"] == "qwen2.5:3b"
 
 
 def test_every_step_is_timed_in_the_audit_record(client: TestClient, stub: StubModel, fake_steps, audit_records) -> None:
@@ -103,8 +103,8 @@ def test_unlisted_model_can_be_substituted(client: TestClient, stub: StubModel, 
     stub.add(text("ok"))
     r = _ask(client, "Hi", model="gpt-4o")
     assert r.status_code == 200
-    assert r.json()["model"] == "llama3.2"
-    assert stub.calls[0].model == "llama3.2"
+    assert r.json()["model"] == "qwen2.5:3b"
+    assert stub.calls[0].model == "qwen2.5:3b"
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +161,7 @@ def test_judge_gets_a_budget_check_before_it_runs(
     monkeypatch.setattr(pipeline, "judge", lambda t, pol, models=None: judged.append(t))
     r = _ask(client, "Hi")
     assert r.headers["x-acl-verdict"] == "block"
-    assert checked == ["llama3.2", "qwen2.5:1.5b"]
+    assert checked == ["qwen2.5:3b", "qwen2.5:1.5b"]
     assert judged == []
 
 

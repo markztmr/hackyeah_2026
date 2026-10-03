@@ -48,7 +48,7 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     return now
 
 
-def _check(p: Principal = ANNA, estimate: int = 100, policy: Policy = POLICY, model: str = "llama3.2"):
+def _check(p: Principal = ANNA, estimate: int = 100, policy: Policy = POLICY, model: str = "qwen2.5:3b"):
     return check_model_and_budget(p, model, estimate, policy)
 
 
@@ -64,7 +64,7 @@ def test_request_within_budget_passes(clock: list[float]) -> None:
 
 
 def test_usage_up_to_the_daily_token_limit_blocks_the_next_call(clock: list[float]) -> None:
-    record_usage(ANNA, 19_950, "llama3.2", POLICY)
+    record_usage(ANNA, 19_950, "qwen2.5:3b", POLICY)
     assert _check(estimate=50).verdict == "allow"
     d = _check(estimate=51)
     assert d.verdict == "block"
@@ -77,7 +77,7 @@ def test_estimate_alone_above_the_limit_is_blocked(clock: list[float]) -> None:
 
 
 def test_usage_is_counted_per_user(clock: list[float]) -> None:
-    record_usage(ANNA, 20_000, "llama3.2", POLICY)
+    record_usage(ANNA, 20_000, "qwen2.5:3b", POLICY)
     assert _check(ANNA).verdict == "block"
     assert _check(MAREK).verdict == "allow"
 
@@ -86,9 +86,9 @@ def test_daily_cost_limit_blocks(clock: list[float]) -> None:
     data = _data()
     data["budgets"]["default"]["tokens_per_day"] = 10_000_000
     data["budgets"]["default"]["cost_per_day_usd"] = 0.01
-    data["pricing_per_1k_tokens"]["llama3.2"] = 0.001
+    data["pricing_per_1k_tokens"]["qwen2.5:3b"] = 0.001
     policy = _policy(data)
-    record_usage(ANNA, 9_000, "llama3.2", policy)  # 0.009 USD
+    record_usage(ANNA, 9_000, "qwen2.5:3b", policy)  # 0.009 USD
     assert _check(estimate=1_000, policy=policy).verdict == "allow"  # exactly 0.010
     d = _check(estimate=1_001, policy=policy)
     assert d.verdict == "block"
@@ -116,8 +116,8 @@ def test_unpriced_model_costs_nothing(clock: list[float]) -> None:
 
 
 def test_hr_manager_override_raises_only_the_keys_it_sets(clock: list[float]) -> None:
-    record_usage(ANNA, 50_000, "llama3.2", POLICY)
-    record_usage(PIOTR, 50_000, "llama3.2", POLICY)
+    record_usage(ANNA, 50_000, "qwen2.5:3b", POLICY)
+    record_usage(PIOTR, 50_000, "qwen2.5:3b", POLICY)
     assert _check(ANNA).verdict == "block"  # default 20,000
     assert _check(PIOTR).verdict == "allow"  # hr_manager 200,000
     for _ in range(10):  # requests_per_minute still comes from the default
@@ -130,14 +130,14 @@ def test_role_without_override_uses_the_profile_default(clock: list[float]) -> N
     del data["budgets"]["default"]["tokens_per_day"]
     data["profile"] = "balanced"  # profile default 50,000
     policy = _policy(data)
-    record_usage(ANNA, 49_900, "llama3.2", policy)
+    record_usage(ANNA, 49_900, "qwen2.5:3b", policy)
     assert _check(estimate=100, policy=policy).verdict == "allow"
     assert _check(estimate=101, policy=policy).verdict == "block"
 
 
 def test_day_boundary_is_the_utc_date(clock: list[float]) -> None:
     clock[0] = datetime(2026, 10, 3, 23, 59, 59, tzinfo=timezone.utc).timestamp()
-    record_usage(ANNA, 20_000, "llama3.2", POLICY)
+    record_usage(ANNA, 20_000, "qwen2.5:3b", POLICY)
     assert _check().verdict == "block"
     clock[0] += 1  # 00:00:00 UTC on the next day
     assert _check().verdict == "allow"
@@ -202,17 +202,17 @@ def test_judge_tokens_are_not_counted_when_count_judge_tokens_is_false(clock: li
     policy = _policy(data)
     record_usage(ANNA, 20_000, "qwen2.5:1.5b", policy, judge=True)
     assert _check(policy=policy).verdict == "allow"
-    record_usage(ANNA, 20_000, "llama3.2", policy)  # answer tokens always count
+    record_usage(ANNA, 20_000, "qwen2.5:3b", policy)  # answer tokens always count
     assert _check(policy=policy).verdict == "block"
 
 
 def test_counters_survive_a_gateway_restart(clock: list[float], state_db: Path) -> None:
-    record_usage(ANNA, 20_000, "llama3.2", POLICY)
+    record_usage(ANNA, 20_000, "qwen2.5:3b", POLICY)
     for _ in range(10):
         admit_request(ANNA, POLICY)
     reloaded = importlib.reload(budget)  # a fresh module: no in-memory state carries over
     reloaded._now = lambda: clock[0]
-    assert reloaded.check_model_and_budget(ANNA, "llama3.2", 1, POLICY).verdict == "block"
+    assert reloaded.check_model_and_budget(ANNA, "qwen2.5:3b", 1, POLICY).verdict == "block"
     assert reloaded.admit_request(ANNA, POLICY).verdict == "block"
     with sqlite3.connect(state_db) as conn:  # on disk, not in memory
         assert conn.execute("SELECT tokens FROM usage WHERE user_id = 'anna'").fetchone() == (20_000,)
@@ -224,7 +224,7 @@ def test_store_path_comes_from_the_policy(
     monkeypatch.delenv("ACL_STATE_PATH")
     data = _data()
     data["budgets"]["store"] = str(tmp_path / "budgets.db")
-    record_usage(ANNA, 5, "llama3.2", _policy(data))
+    record_usage(ANNA, 5, "qwen2.5:3b", _policy(data))
     assert (tmp_path / "budgets.db").exists()
 
 
@@ -236,7 +236,7 @@ def test_store_never_uses_the_data_database(
     assert _check().verdict == "block"
     assert admit_request(ANNA, POLICY).verdict == "block"
     with pytest.raises(ValueError):
-        record_usage(ANNA, 5, "llama3.2", POLICY)
+        record_usage(ANNA, 5, "qwen2.5:3b", POLICY)
     assert db.read_bytes() == before
 
 
@@ -256,7 +256,7 @@ def test_invalid_estimate_is_blocked(clock: list[float], estimate: Any) -> None:
 @pytest.mark.parametrize("tokens", [-1, 1.5, None])
 def test_invalid_usage_is_refused(clock: list[float], tokens: Any) -> None:
     with pytest.raises(ValueError):
-        record_usage(ANNA, tokens, "llama3.2", POLICY)
+        record_usage(ANNA, tokens, "qwen2.5:3b", POLICY)
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +267,7 @@ ANNA_KEY = {"Authorization": "Bearer demo-anna"}
 
 
 def _ask(client: TestClient, content: str = "Hello?"):
-    payload = {"model": "llama3.2", "messages": [{"role": "user", "content": content}]}
+    payload = {"model": "qwen2.5:3b", "messages": [{"role": "user", "content": content}]}
     return client.post("/v1/chat/completions", json=payload, headers=ANNA_KEY)
 
 
@@ -286,7 +286,7 @@ def test_pipeline_request_within_budget_passes_and_is_charged(
 def test_pipeline_request_after_the_limit_is_blocked_before_any_model_call(
     clock: list[float], client: TestClient, stub: StubModel, judge_stub: StubModel, fake_steps, audit_records
 ) -> None:
-    record_usage(ANNA, 20_000, "llama3.2", POLICY)
+    record_usage(ANNA, 20_000, "qwen2.5:3b", POLICY)
     r = _ask(client)
     assert r.status_code == 200
     assert r.headers["x-acl-verdict"] == "block"
@@ -308,7 +308,7 @@ def test_pipeline_blocks_the_eleventh_request_in_a_minute(
 def test_pipeline_estimate_includes_max_tokens(
     clock: list[float], client: TestClient, stub: StubModel, fake_steps
 ) -> None:
-    record_usage(ANNA, 20_000 - 400, "llama3.2", POLICY)  # the prompt fits, prompt + 512 does not
+    record_usage(ANNA, 20_000 - 400, "qwen2.5:3b", POLICY)  # the prompt fits, prompt + 512 does not
     assert _ask(client, "Hi").headers["x-acl-verdict"] == "block"
     assert stub.calls == []
 
@@ -331,7 +331,7 @@ def test_tool_loop_stops_when_a_call_exhausts_the_budget(
     first_call = estimates[0]
 
     clock[0] += 86_400  # a new day: fresh counters and a fresh per-minute window
-    record_usage(ANNA, 20_000 - first_call, "llama3.2", POLICY)  # exactly room for the first call
+    record_usage(ANNA, 20_000 - first_call, "qwen2.5:3b", POLICY)  # exactly room for the first call
     stub.calls.clear()
     stub.add(query, text("Done."))
     r = _ask(client)

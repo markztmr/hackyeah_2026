@@ -243,10 +243,13 @@ def test_no_panel_is_taller_than_one_screen() -> None:
     tree = ast.parse(Path(APP).read_text(encoding="utf-8"))
     heights = [kw.value for n in ast.walk(tree) if isinstance(n, ast.Call) for kw in n.keywords if kw.arg == "height"]
     assert heights
-    # _minute_chart forwards its last argument as the height
+    # The chart helpers forward their last argument as the height
+    helpers = {"_minute_chart", "rank_chart", "tools_chart", "latency_chart", "timeline_chart"}
     heights += [n.args[-1] for n in ast.walk(tree)
-                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_minute_chart"]
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in helpers]
     for h in heights:
+        if isinstance(h, ast.Dict) and [k.value for k in h.keys if isinstance(k, ast.Constant)] == ["band"]:
+            continue  # bar thickness as a share of the row (Vega-Lite), not a pixel height
         if isinstance(h, ast.Constant):
             assert h.value <= dashboard.PANEL_HEIGHT
         elif isinstance(h, ast.Name) and h.id == "height":
@@ -254,3 +257,48 @@ def test_no_panel_is_taller_than_one_screen() -> None:
         else:  # PANEL_HEIGHT itself or min(PANEL_HEIGHT, ...)
             assert "PANEL_HEIGHT" in ast.unparse(h)
     assert dashboard.PANEL_HEIGHT <= 400
+
+
+# ---------------------------------------------------------------------------
+# Smooth refresh: /health never blocks a tick; charts build from metrics
+# ---------------------------------------------------------------------------
+
+
+def test_stale_health_is_served_at_once_while_a_thread_fetches_the_next(monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+
+    release, calls = threading.Event(), []
+
+    def slow_fetch(path: str, timeout: float = 0) -> tuple[Any, str | None]:
+        calls.append(path)
+        if len(calls) > 1:
+            release.wait(5)
+        return {"n": len(calls)}, None
+
+    monkeypatch.setattr(dashboard, "fetch", slow_fetch)
+    cache = dashboard.HealthCache()
+    assert cache.get(now=0.0) == ({"n": 1}, None)  # the first fetch waits: nothing to show yet
+    stale = cache.fetched_at + dashboard.HEALTH_TTL_S + 1
+    assert cache.get(now=stale) == ({"n": 1}, None)  # returns at once, refresh runs behind
+    assert cache.get(now=stale) == ({"n": 1}, None)  # one refresh at a time
+    release.set()
+    for _ in range(100):
+        if not cache.busy:
+            break
+        threading.Event().wait(0.02)
+    assert cache.value == ({"n": 2}, None) and calls == ["/health", "/health"]
+
+
+def test_charts_build_from_metrics_and_skip_empty_timelines() -> None:
+    m = {"blocks_over_time": [{"minute": "2026-10-03T11:58:00+00:00", "requests": 3, "blocks": 0},
+                              {"minute": "2026-10-03T11:59:00+00:00", "requests": 2, "blocks": 1}],
+         "tool_decisions_by_tool": {"send_email": {"allow": 2, "deny": 1}},
+         "latency_by_step": {"authenticate": {"median_ms": 0.1, "p95_ms": 0.4, "count": 3},
+                             "total": {"median_ms": 9.0, "p95_ms": 20.0, "count": 3}}}
+    assert dashboard.timeline_chart({}, "blocks", dashboard.ACCENT, 200) is None
+    for chart in (dashboard.timeline_chart(m, "blocks", dashboard.ACCENT, 200),
+                  dashboard.rank_chart(dashboard.count_rows({"injection": 2}, "control"), "control", "#000000", 200),
+                  dashboard.tools_chart(dashboard.tool_rows(m), 200),
+                  dashboard.latency_chart(dashboard.latency_rows(m), 200)):
+        spec = chart.to_dict()
+        assert 0 < spec["height"] <= 200

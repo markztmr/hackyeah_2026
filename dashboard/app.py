@@ -7,7 +7,8 @@ Reads only the gateway's HTTP endpoints (/metrics, /policy/effective, /health,
 section 12: posture, live feed, threats, data access, consumption, performance, export,
 plus the T1 totals. The live panels refresh every ``dashboard.refresh_seconds`` (from
 /policy/effective); /health (model pings and a fresh digest check, so slower) is cached
-for ``HEALTH_TTL_S``. If the gateway is down, a banner says so and the page keeps running.
+for ``HEALTH_TTL_S`` and refreshed in a background thread, so a refresh never stalls the
+page. If the gateway is down, a banner says so and the page keeps running.
 
 Made for a projector: large numbers, grey for everything except blocks and denials, which
 use the one accent colour, and every panel at most one screen tall.
@@ -16,8 +17,12 @@ from __future__ import annotations
 
 import html
 import os
+import threading
+import time
+from dataclasses import dataclass, field
 from typing import Any
 
+import altair as alt
 import httpx
 import pandas as pd
 import streamlit as st
@@ -64,6 +69,26 @@ header[data-testid="stHeader"] {{ background: transparent; }}
 .acl-dot {{ width: .6rem; height: .6rem; border-radius: 50%; background: #22c55e;
   box-shadow: 0 0 0 4px rgba(34, 197, 94, .18); }}
 .acl-dot.down {{ background: {ACCENT}; box-shadow: 0 0 0 4px rgba(220, 38, 38, .18); }}
+.acl-dot:not(.down) {{ animation: acl-pulse 2.4s ease-in-out infinite; }}
+@keyframes acl-pulse {{ 0%, 100% {{ box-shadow: 0 0 0 3px rgba(34, 197, 94, .22); }}
+  50% {{ box-shadow: 0 0 0 6px rgba(34, 197, 94, .08); }} }}
+/* Live refresh without flicker: the fragment reruns every few seconds, so Streamlit's
+   "stale" dimming and the running indicator would blink on every tick. */
+[data-testid="stElementContainer"][data-stale="true"], [data-stale="true"] {{ opacity: 1 !important;
+  filter: none !important; transition: none !important; }}
+[data-testid="stStatusWidget"] {{ visibility: hidden; }}
+/* Element toolbars keep Search and Show/hide columns only; fullscreen (cropped to half a
+   screen), per-element downloads and the chart developer actions go. The audit export
+   button stays the one way to download. */
+[data-testid="stElementToolbarButton"]:has(button[aria-label^="Fullscreen"]),
+[data-testid="stElementToolbarButton"]:has(button[aria-label^="Download"]),
+[data-testid="stElementToolbarButton"]:has(button[aria-label^="Show data"]),
+[data-testid="stElementToolbarButton"]:has(button[aria-label^="Copy Vega-Lite"]) {{ display: none; }}
+[class*="st-key-panel_"], [data-testid="stMetric"] {{ transition: box-shadow .25s ease, transform .25s ease; }}
+[class*="st-key-panel_"]:hover {{ box-shadow: 0 1px 2px rgba(15, 23, 42, .05), 0 14px 32px -18px rgba(15, 23, 42, .28); }}
+[data-testid="stMetric"]:hover {{ transform: translateY(-1px); }}
+.acl-chart-empty {{ display: flex; align-items: center; justify-content: center; height: 120px;
+  border: 1px dashed #e2e8f0; border-radius: .75rem; color: #94a3b8; font-size: .9rem; }}
 </style>
 """
 SHIELD = ('<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#e2e8f0" stroke-width="1.8" '
@@ -87,9 +112,49 @@ def fetch(path: str, timeout: float = TIMEOUT_S) -> tuple[Any, str | None]:
         return None, "unreadable response"
 
 
-@st.cache_data(ttl=HEALTH_TTL_S, show_spinner=False)
+@dataclass
+class HealthCache:
+    """The last /health answer of one browser session, refreshed in the background.
+
+    /health pings both models and re-checks digests, which takes seconds. Fetching it
+    inline every ``HEALTH_TTL_S`` froze the live fragment for that long. Only the very
+    first fetch waits; after that a stale value is served while a thread fetches the next.
+    """
+
+    value: tuple[Any, str | None] | None = None
+    fetched_at: float = 0.0
+    busy: bool = False
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def get(self, now: float | None = None) -> tuple[Any, str | None]:
+        now = time.monotonic() if now is None else now
+        if self.value is None:
+            self._refresh()
+            return self.value or (None, DOWN)
+        with self.lock:
+            start = not self.busy and now - self.fetched_at >= HEALTH_TTL_S
+            if start:
+                self.busy = True
+        if start:
+            threading.Thread(target=self._refresh, daemon=True).start()
+        return self.value
+
+    def _refresh(self) -> None:
+        try:
+            result = fetch("/health", HEALTH_TIMEOUT_S)
+        except Exception:  # noqa: BLE001 - keep serving the last value
+            result = self.value or (None, DOWN)
+        with self.lock:
+            self.value, self.fetched_at, self.busy = result, time.monotonic(), False
+
+
 def fetch_health() -> tuple[Any, str | None]:
-    return fetch("/health", HEALTH_TIMEOUT_S)
+    """/health for this session, without blocking a refresh (see ``HealthCache``)."""
+    # Not isinstance: every rerun re-executes this file, so the class object is new each time.
+    cache = st.session_state.get("health_cache")
+    if cache is None:
+        cache = st.session_state["health_cache"] = HealthCache()
+    return cache.get()
 
 
 def export_csv() -> bytes:
@@ -219,6 +284,11 @@ def latency_rows(metrics: dict[str, Any]) -> list[dict[str, Any]]:
             for step, v in (metrics.get("latency_by_step") or {}).items()]
 
 
+def format_ms(ms: float) -> str:
+    """Latency for people: "0.42 ms", "13.1 ms", "6.96 s"."""
+    return f"{ms / 1000:.3g} s" if ms >= 1000 else f"{ms:.3g} ms"
+
+
 def _cell(value: Any) -> str:
     if isinstance(value, (dict, list)):
         return ", ".join(str(v) for v in value) if isinstance(value, list) else str(value)
@@ -307,12 +377,143 @@ def _live_feed(metrics: dict[str, Any]) -> None:
         st.caption("No requests yet.")
 
 
+# ---------------------------------------------------------------------------
+# Charts (Altair, one shared style: quiet axes, value labels, tooltips)
+# ---------------------------------------------------------------------------
+
+FONT = "Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif"
+INK = "#0f172a"
+MUTED = "#64748b"
+GRID = "#eef1f6"
+LATENCY_STEPS = ("median ms", "p95 ms")
+
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
+def _style(chart: Any, height: int) -> Any:
+    return (chart.properties(height=height, width="container")
+            .configure(font=FONT, background="transparent", padding={"left": 2, "right": 8, "top": 6, "bottom": 2})
+            .configure_view(strokeWidth=0)
+            .configure_axis(labelColor=MUTED, labelFontSize=12, labelPadding=6, title=None, domain=False,
+                            ticks=False, gridColor=GRID)
+            .configure_legend(orient="top", direction="horizontal", title=None, labelColor=MUTED, labelFontSize=12,
+                              symbolType="circle", symbolSize=80, padding=0, offset=6)
+            .configure_text(font=FONT))
+
+
+def _show_chart(where: Any, chart: Any, key: str) -> None:
+    where.altair_chart(chart, width="stretch", theme=None, key=key)
+
+
+def _empty(where: Any, text: str) -> None:
+    where.markdown(f'<div class="acl-chart-empty">{html.escape(text)}</div>', unsafe_allow_html=True)
+
+
+BAR_PX = 18  # bar thickness for category charts; the chart is only as tall as its rows
+ROW_PX = 34
+
+
+def _rows_height(count: int, height: int) -> int:
+    """Category charts grow with their rows (up to ``height``) instead of stretching a few bars."""
+    return min(height, ROW_PX * max(count, 1) + 30)
+
+
+def timeline_chart(metrics: dict[str, Any], y: str, color: str, height: int) -> Any | None:
+    """Per-minute counts for the last hour as UTC minute columns, highlighted on hover."""
+    buckets = metrics.get("blocks_over_time") or []
+    if not buckets:
+        return None
+    df = pd.DataFrame({"time": pd.to_datetime([b.get("minute") for b in buckets], utc=True),
+                       "value": [int(b.get(y, 0)) for b in buckets]})
+    hover = alt.selection_point(fields=["time"], on="pointerover", clear="pointerout", empty=False)
+    bars = alt.Chart(df).mark_bar(color=color, cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+        # utc* time unit: bins and labels in UTC, as the caption says, whatever the viewer's time zone
+        x=alt.X("utchoursminutes(time):T", axis=alt.Axis(format="%H:%M", tickCount=6, grid=False, labelFlush=False),
+                scale=alt.Scale(paddingInner=0.25)),
+        y=alt.Y("value:Q", scale=alt.Scale(domainMin=0, nice=True),
+                axis=alt.Axis(tickMinStep=1, format="d", tickCount=4, gridDash=[3, 3])),
+        opacity=alt.condition(hover, alt.value(1), alt.value(0.78)),
+        tooltip=[alt.Tooltip("utchoursminutes(time):T", title="Minute (UTC)", format="%H:%M"),
+                 alt.Tooltip("value:Q", title=y.capitalize())],
+    ).add_params(hover)
+    return _style(bars, height)
+
+
+def rank_chart(rows: list[dict[str, Any]], key: str, color: str, height: int) -> Any:
+    """Horizontal bars, largest first, with the count printed at the end of each bar."""
+    df = pd.DataFrame(rows)
+    top = max(int(df["blocks"].max()), 1)
+    base = alt.Chart(df).encode(
+        y=alt.Y(f"{key}:N", sort="-x", axis=alt.Axis(labelLimit=170, labelColor=INK, labelFontSize=12.5)),
+        x=alt.X("blocks:Q", axis=None, scale=alt.Scale(domain=[0, top * 1.22], nice=False)),
+        tooltip=[alt.Tooltip(f"{key}:N", title=key.capitalize()), alt.Tooltip("blocks:Q", title="Blocks")])
+    bars = base.mark_bar(color=color, cornerRadiusEnd=5, size=BAR_PX)
+    labels = base.mark_text(align="left", dx=6, color=INK, fontWeight=600, fontSize=12.5).encode(text="blocks:Q")
+    return _style(bars + labels, _rows_height(len(rows), height))
+
+
+def tools_chart(rows: list[dict[str, Any]], height: int) -> Any:
+    """Allowed and denied calls per client tool, stacked, with a legend on top."""
+    df = pd.DataFrame(rows).melt(id_vars="tool", value_vars=["allowed", "denied"], var_name="outcome",
+                                 value_name="calls")
+    df = df[df["calls"] > 0]
+    totals_df = pd.DataFrame([{"tool": r["tool"], "total": r["allowed"] + r["denied"]} for r in rows])
+    top = max(int(totals_df["total"].max()), 1)
+    y = alt.Y("tool:N", axis=alt.Axis(labelColor=INK, labelFontSize=12.5, labelLimit=170))
+    x_scale = alt.Scale(domain=[0, top * 1.22], nice=False)
+    bars = alt.Chart(df).mark_bar(cornerRadius=4, size=BAR_PX, stroke="#ffffff", strokeWidth=1.5).encode(
+        y=y, x=alt.X("calls:Q", stack="zero", scale=x_scale, axis=None),
+        color=alt.Color("outcome:N", scale=alt.Scale(domain=["allowed", "denied"], range=[NEUTRAL, ACCENT])),
+        order=alt.Order("outcome:N", sort="ascending"),
+        tooltip=[alt.Tooltip("tool:N", title="Tool"), alt.Tooltip("outcome:N", title="Outcome"),
+                 alt.Tooltip("calls:Q", title="Calls")])
+    labels = alt.Chart(totals_df).mark_text(align="left", dx=6, color=INK, fontWeight=600, fontSize=12.5).encode(
+        y=y, x=alt.X("total:Q", scale=x_scale), text="total:Q")
+    return _style(bars + labels, _rows_height(len(rows), height) + 24)  # + the legend row
+
+
+# Steps range from microseconds (fill) to seconds (model calls), so the axis is logarithmic;
+# a floor keeps 0 ms readings on the chart. Labels read as "0.1 ms", "15 ms", "6.9 s".
+LATENCY_FLOOR_MS = 0.001
+LATENCY_TICKS = [0.001, 0.01, 0.1, 1, 10, 100, 1000, 10000, 100000]
+_MS_LABEL = ("{v} >= 1000 ? format({v} / 1000, '.3~r') + ' s' : format({v}, '.3~r') + ' ms'")
+
+
+def latency_chart(rows: list[dict[str, Any]], height: int) -> Any:
+    """Median to p95 per pipeline step as a dumbbell on a log axis: the gap is the tail latency."""
+    steps = [{**r, "median ms": max(r["median ms"], LATENCY_FLOOR_MS), "p95 ms": max(r["p95 ms"], LATENCY_FLOOR_MS)}
+             for r in rows if r["step"] != "total"]
+    df = pd.DataFrame(steps)
+    order = [r["step"] for r in steps]
+    long = df.melt(id_vars="step", value_vars=list(LATENCY_STEPS), var_name="measure", value_name="ms")
+    top = max(float(df["p95 ms"].max()), 1.0)
+    ticks = [t for t in LATENCY_TICKS if t <= top * 10]
+    scale = alt.Scale(type="log", domain=[LATENCY_FLOOR_MS, top * 8], nice=False)
+    y = alt.Y("step:N", sort=order, axis=alt.Axis(labelColor=INK, labelFontSize=12.5, labelLimit=170))
+    x = alt.X("ms:Q", scale=scale, axis=alt.Axis(values=ticks, gridDash=[3, 3],
+                                                 labelExpr=_MS_LABEL.format(v="datum.value")))
+    span = alt.Chart(df).mark_rule(color="#cbd5e1", strokeWidth=3, strokeCap="round").encode(
+        y=y, x=alt.X("median ms:Q", scale=scale), x2="p95 ms:Q")
+    dots = alt.Chart(long).mark_circle(size=110, opacity=1, stroke="#ffffff", strokeWidth=1.5).encode(
+        y=y, x=x,
+        color=alt.Color("measure:N", scale=alt.Scale(domain=list(LATENCY_STEPS), range=[NEUTRAL, DARK]),
+                        legend=alt.Legend(labelExpr="datum.label == 'median ms' ? 'Median' : 'p95'")),
+        tooltip=[alt.Tooltip("step:N", title="Step"), alt.Tooltip("measure:N", title="Measure"),
+                 alt.Tooltip("ms:Q", title="Latency (ms)", format=".3f")])
+    labels = alt.Chart(df).transform_calculate(label=_MS_LABEL.format(v="datum['p95 ms']")).mark_text(
+        align="left", dx=10, color=MUTED, fontSize=12).encode(y=y, x=alt.X("p95 ms:Q", scale=scale), text="label:N")
+    return _style(span + dots + labels, height)
+
+
 def _minute_chart(where: Any, metrics: dict[str, Any], y: str, color: str, height: int) -> None:
-    rows = over_time_rows(metrics)
-    if rows:
-        where.bar_chart(rows, x="minute", y=y, color=color, height=height)
+    chart = timeline_chart(metrics, y, color, height)
+    if chart is None:
+        _empty(where, "No data yet")
     else:
-        where.markdown("**No data**")
+        _show_chart(where, chart, "chart_minutes_" + y)
 
 
 def _threats(metrics: dict[str, Any]) -> None:
@@ -328,9 +529,9 @@ def _threats(metrics: dict[str, Any]) -> None:
         column.caption(title)
         rows = count_rows(counts, key)[:8]
         if rows:
-            column.bar_chart(rows, x=key, y="blocks", color=ACCENT, horizontal=True, height=240)
+            _show_chart(column, rank_chart(rows, key, ACCENT, 240), "chart_rank_" + key)
         else:
-            column.markdown("**None**")
+            _empty(column, "No blocks")
 
 
 def _data_access(metrics: dict[str, Any]) -> None:
@@ -346,10 +547,9 @@ def _data_access(metrics: dict[str, Any]) -> None:
     tools.caption("Client tool calls: allowed vs denied")
     rows = tool_rows(metrics)
     if rows:
-        tools.bar_chart(rows, x="tool", y=["allowed", "denied"], color=[NEUTRAL, ACCENT], horizontal=True,
-                        height=240)
+        _show_chart(tools, tools_chart(rows, 240), "chart_tools")
     else:
-        tools.markdown("**No tool calls yet**")
+        _empty(tools, "No tool calls yet")
 
 
 def _consumption(metrics: dict[str, Any]) -> None:
@@ -376,8 +576,12 @@ def _performance(metrics: dict[str, Any]) -> None:
         return
     table, chart = st.columns([2, 3])
     table.dataframe(rows, hide_index=True, height=min(PANEL_HEIGHT, 38 + 35 * len(rows)), use_container_width=True)
-    chart.bar_chart(rows, x="step", y=["median ms", "p95 ms"], color=[NEUTRAL, DARK], horizontal=True,
-                    stack=False, height=PANEL_HEIGHT)
+    total = next((r for r in rows if r["step"] == "total"), None)
+    if total:
+        chart.caption(f"Per step, median to p95 · whole request: {format_ms(total['median ms'])} median, "
+                      f"{format_ms(total['p95 ms'])} p95")
+    if any(r["step"] != "total" for r in rows):
+        _show_chart(chart, latency_chart(rows, PANEL_HEIGHT - 40), "chart_latency")
 
 
 def _export() -> None:

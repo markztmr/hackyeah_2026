@@ -146,8 +146,62 @@ def test_empty_conversation_offers_the_worked_examples_and_sends_one(monkeypatch
     at = AppTest.from_file(str(REPO_ROOT / "demo_agent" / "app.py"), default_timeout=20)
     at.run()
     buttons = {b.label: b for b in at.button}
-    assert set(agent.SUGGESTIONS) <= set(buttons)
-    buttons["My salary and the CEO's"].click().run()
+    first = [agent.SCENARIO_BY_ID[i] for i in agent.FIRST_DEAL]
+    assert {s.label for s in first} <= set(buttons)
+    buttons[first[0].label].click().run()
     assert not at.exception
-    assert sent == [agent.SUGGESTIONS["My salary and the CEO's"]]
+    assert sent == [first[0].prompt]
     assert any("unreachable" in e.value for e in at.error)
+    scenario_labels = {s.label for s in agent.SCENARIOS}
+    shown = [b.label for b in at.button if b.label in scenario_labels]
+    assert first[0].label not in shown and len(shown) == agent.DECK_SIZE  # replaced, not repeated
+
+
+# ---------------------------------------------------------------------------
+# Scenario buttons: a pool of edge cases dealt four at a time, never repeated
+# ---------------------------------------------------------------------------
+
+
+def test_a_new_conversation_starts_with_the_worked_examples() -> None:
+    deck = agent.Deck()
+    assert deck.visible == list(agent.FIRST_DEAL) and not deck.used
+    assert len(agent.FIRST_DEAL) == agent.DECK_SIZE
+    assert all(i in agent.SCENARIO_BY_ID for i in agent.FIRST_DEAL)
+
+
+def test_a_used_scenario_is_replaced_in_place_by_an_unused_one() -> None:
+    import random
+
+    deck = agent.Deck()
+    agent.use_scenario(deck, "email_out", random.Random(1))
+    assert len(deck.visible) == agent.DECK_SIZE and "email_out" not in deck.visible
+    assert deck.visible[:2] == ["hidden", "mixed"] and deck.visible[3] == "inject_en"  # same slot
+    assert deck.visible[2] not in agent.FIRST_DEAL
+
+
+def test_scenarios_never_repeat_and_run_out_cleanly() -> None:
+    import random
+
+    rng, deck, seen = random.Random(7), agent.Deck(), []
+    while deck.visible:
+        assert len(set(deck.visible)) == len(deck.visible)  # no duplicates on screen
+        assert not set(deck.visible) & deck.used  # nothing used comes back
+        seen.append(deck.visible[0])
+        agent.use_scenario(deck, deck.visible[0], rng)
+    assert sorted(seen) == sorted(s.id for s in agent.SCENARIOS)
+
+
+def test_typing_a_scenario_prompt_by_hand_uses_it_up() -> None:
+    import random
+
+    deck = agent.Deck()
+    assert agent.scenario_for_prompt("  " + agent.SCENARIO_BY_ID["hidden"].prompt + " ") == "hidden"
+    assert agent.scenario_for_prompt("What is the weather?") is None
+    agent.use_scenario(deck, "secret", random.Random(0))  # not on screen: only marked used
+    assert "secret" in deck.used and deck.visible == list(agent.FIRST_DEAL)
+
+
+def test_every_scenario_is_unique_and_explained() -> None:
+    ids = [s.id for s in agent.SCENARIOS]
+    assert len(ids) == len(set(ids)) and len({s.prompt for s in agent.SCENARIOS}) == len(ids)
+    assert all(s.label and s.prompt and s.shows for s in agent.SCENARIOS)

@@ -63,6 +63,23 @@ def state_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return path
 
 
+@pytest.fixture(scope="session")
+def seeded_db_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One seeded demo database per test session, so ``pytest`` needs no ``db/seed.py`` first."""
+    from db.seed import seed
+
+    path = tmp_path_factory.mktemp("data") / "demo.db"
+    seed(path)
+    return path
+
+
+@pytest.fixture(autouse=True)
+def default_db(seeded_db_template: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Every test reads the session's seeded copy, never the repo's demo.db; ``db`` gives a private one."""
+    monkeypatch.setenv("ACL_DB_PATH", str(seeded_db_template))
+    return seeded_db_template
+
+
 @pytest.fixture(autouse=True)
 def ollama_tags(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
     """Offline stand-in for Ollama /api/tags: every pinned model is installed with its pinned digest.

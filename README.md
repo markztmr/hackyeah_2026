@@ -150,12 +150,14 @@ Requirements: Python 3.11+, [Ollama](https://ollama.com).
 
 ```bash
 pip install -e ".[dev]"
-python db/seed.py
-pytest
+pytest                       # self-contained: seeds its own temp database
 
+python db/seed.py            # demo.db for the running gateway
 ollama pull qwen2.5:3b       # answer model
 ollama pull qwen2.5:1.5b     # judge model
 ```
+
+On Windows, clone into a short path: very long paths can break loading of native libraries.
 
 Ollama must listen on localhost only (`OLLAMA_HOST=127.0.0.1`, the default). The gateway is the only service that should be reachable from the network.
 

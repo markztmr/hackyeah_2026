@@ -109,6 +109,9 @@ roles:
     tools:
       send_email:
         args: { to: { allow_pattern: "^[^@]+@company\\.pl$" } }
+      # MCP tools, named as MCP hosts expose them to the model: mcp__<server>__<tool>
+      mcp__filesystem__read_file:
+        args: { path: { allow_pattern: "docs/[A-Za-z0-9_./-]+", deny_pattern: "\\.\\." } }
   sales_lead:
     max_ai_data_policy: allow
     max_label_to_model: internal
@@ -120,6 +123,10 @@ roles:
       send_email:
         args: { to: { allow_pattern: "^[^@]+@company\\.pl$" } }
       create_ticket: {}
+      mcp__filesystem__read_file:
+        args: { path: { allow_pattern: "docs/[A-Za-z0-9_./-]+", deny_pattern: "\\.\\." } }
+      mcp__github__create_issue:
+        args: { repo: { allow_pattern: "company/[a-z0-9-]+" } }
   hr_manager:
     max_ai_data_policy: allow
     max_label_to_model: internal  # salaries are sensitive: never sent to the model
@@ -132,6 +139,11 @@ roles:
         args: { to: { allow_pattern: "^[^@]+@company\\.pl$" } }
         max_label: internal       # may email internal values, never salaries
       create_ticket: {}
+      mcp__filesystem__read_file:
+        args: { path: { allow_pattern: "docs/[A-Za-z0-9_./-]+", deny_pattern: "\\.\\." } }
+      mcp__github__create_issue:
+        args: { repo: { allow_pattern: "company/[a-z0-9-]+" } }
+        max_label: internal       # may put internal values in an issue, never salaries
       # delete_employee, transfer_funds: not listed, so denied
 
 prompt_controls:

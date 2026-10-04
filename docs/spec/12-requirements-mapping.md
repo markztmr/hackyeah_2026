@@ -7,7 +7,7 @@ component.
 
 | Task requirement | Where it is met |
 | --- | --- |
-| Integrates into agent-to-model, app-to-agent, agent-to-MCP traffic | OpenAI-compatible proxy; client tools governed (sections 1, 4, 5) |
+| Integrates into agent-to-model, app-to-agent, agent-to-MCP traffic | OpenAI-compatible proxy; client tools governed, MCP tools included (`mcp__<server>__<tool>`, `tests/test_mcp_tools.py`) (sections 1, 4, 5) |
 | Centralized policy engine | `policy.yaml`, live reload, effective-policy view (section 6) |
 | Deterministic controls (PII, secrets, auth) | API-key auth, masker, SQL validator and authorizer, tool argument rules |
 | Semantic (AI-based) controls | Judge model on user input and tool results |

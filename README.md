@@ -128,6 +128,41 @@ Binding        denied: Every read of table salaries needs
 
 A request with an unknown API key returns HTTP 401. Every block returns HTTP 200 with a readable reason and the `x-acl-verdict: block` header.
 
+## MCP tools
+
+An MCP host (Claude Desktop, Cursor, an agent framework) gives the model each MCP server's tools as ordinary function tools, usually named `mcp__<server>__<tool>`. It then runs the calls the model makes and sends the results back. Both directions cross the gateway, so MCP tools get the same controls as any client tool:
+
+```text
+MCP server  <->  MCP host / agent  <->  AI Control Layer  <->  model
+```
+
+- **Tool descriptions** are scanned before any model call. A poisoned description blocks the request.
+- **Every call** is authorized before the host sees it: the role must list the tool, every argument rule must pass, and query results may leave only up to the tool's `max_label`.
+- **Every result** the host sends back is masked and scanned like user input, so injected instructions in a file or web page never reach the model.
+
+`policy.yaml` grants two example MCP tools:
+
+```yaml
+mcp__filesystem__read_file:
+  args: { path: { allow_pattern: "docs/[A-Za-z0-9_./-]+", deny_pattern: "\\.\\." } }
+mcp__github__create_issue:          # not granted to interns
+  args: { repo: { allow_pattern: "company/[a-z0-9-]+" } }
+  max_label: internal               # HR may put a headcount in an issue, never a salary
+```
+
+`tests/test_mcp_tools.py` covers these cases:
+
+- reading inside `docs/`;
+- path traversal and paths outside the folder;
+- a tool the role does not have, and an unknown MCP server;
+- a repository outside the company;
+- egress of a salary;
+- a poisoned description;
+- an injection inside a file;
+- personal data inside a file.
+
+The host's own traffic to the MCP server does not pass through the gateway. A dedicated MCP proxy in front of the servers is the next step.
+
 ## Features
 
 - **SQL enforcement.** Parsed with sqlglot into an AST. Single `SELECT` only, table and column grants per role, row scope via gateway-bound parameters (`:current_user`, `:current_department`).
@@ -140,7 +175,7 @@ A request with an unknown API key returns HTTP 401. Every block returns HTTP 200
 
 ## Results
 
-- 1,428 tests pass in under a minute, with no network and no Ollama, and none are skipped. 8 more run against a live Ollama. A scripted stub model records every input, so tests assert that no hidden value ever reached a model.
+- 1,437 tests pass in under a minute, with no network and no Ollama, and none are skipped. 8 more run against a live Ollama. A scripted stub model records every input, so tests assert that no hidden value ever reached a model.
 - Gateway overhead with stub models (`python -m tests.bench`): about 11 ms median and 24 ms p95 per request. A blocked request takes under 4 ms (median).
 - OWASP Top 10 for LLM Applications (2025): 6 risks covered fully, 3 partially, 1 out of scope (LLM08, no RAG).
 

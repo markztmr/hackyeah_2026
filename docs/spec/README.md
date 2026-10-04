@@ -1,7 +1,5 @@
 # AI Control Layer — Design Specification v2
 
-Oct 3, 2026 · @Mark Babushkin
-
 One file per top-level section. These files are kept in line with the implementation.
 `docs/AI Control Layer — Design Specification v2.pdf` is the original design as of
 3 October 2026 and is not updated; where the two differ, these files describe the code.

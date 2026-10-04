@@ -1,0 +1,184 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="940" viewBox="0 0 1280 940" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#57606a"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0969da"/>
+    </marker>
+    <style>
+      .title { font-size: 22px; font-weight: 600; fill: #1f2328; }
+      .subtitle { font-size: 14px; fill: #59636e; }
+      .h { font-size: 15px; font-weight: 600; fill: #1f2328; }
+      .t { font-size: 13px; fill: #1f2328; }
+      .m { font-size: 12.5px; fill: #59636e; }
+      .code { font-family: Consolas, 'SFMono-Regular', Menlo, monospace; font-size: 12px; fill: #59636e; }
+      .lbl { font-size: 12px; fill: #57606a; }
+      .tag { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; }
+      .step { font-size: 12px; font-weight: 600; fill: #0969da; }
+      .line { stroke: #57606a; stroke-width: 1.4; fill: none; }
+      .line-blue { stroke: #0969da; stroke-width: 1.6; fill: none; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="940" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="30" y="44" class="title">AI Control Layer — architecture</text>
+  <text x="30" y="68" class="subtitle">Only the gateway is trusted. It is the only component that touches data, the vault and the policy.</text>
+
+  <!-- Legend -->
+  <rect x="980" y="30" width="22" height="14" rx="3" fill="#ffffff" stroke="#0969da" stroke-width="1.6"/>
+  <text x="1010" y="42" class="lbl">trusted</text>
+  <rect x="1080" y="30" width="22" height="14" rx="3" fill="#ffffff" stroke="#8c959f" stroke-width="1.4" stroke-dasharray="4 3"/>
+  <text x="1110" y="42" class="lbl">untrusted</text>
+  <rect x="980" y="54" width="22" height="14" rx="3" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="1010" y="66" class="lbl">storage, gateway access only</text>
+
+  <!-- ============ Gateway ============ -->
+  <rect x="330" y="96" width="540" height="680" rx="12" fill="#ffffff" stroke="#0969da" stroke-width="1.8"/>
+  <text x="350" y="126" class="h">Gateway</text>
+  <text x="418" y="126" class="tag" fill="#0969da">TRUSTED</text>
+  <text x="850" y="126" class="code" text-anchor="end">FastAPI · gateway/pipeline.py</text>
+
+  <!-- Phase 1: Inbound -->
+  <rect x="350" y="144" width="500" height="150" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="368" y="170" class="step">1–4</text>
+  <text x="398" y="170" class="h">Inbound</text>
+  <text x="832" y="170" class="code" text-anchor="end">auth.py · budget.py · inbound/</text>
+  <text x="368" y="198" class="t">API key → principal, policy snapshot</text>
+  <text x="368" y="220" class="t">Model allowlist, digest pinning, budget pre-check</text>
+  <text x="368" y="242" class="t">Secret and PII detection, history re-masking, tool-definition scan</text>
+  <text x="368" y="264" class="t">Injection phrases, signature feed, then the judge model</text>
+
+  <!-- Phase 2: Tool loop -->
+  <rect x="350" y="310" width="500" height="150" rx="8" fill="#ddf4ff" stroke="#0969da" stroke-width="1.6"/>
+  <text x="368" y="336" class="step">5–6</text>
+  <text x="398" y="336" class="h">Model and tool loop</text>
+  <text x="832" y="336" class="code" text-anchor="end">agency/loop.py · binding/</text>
+  <text x="368" y="364" class="t">Model call with sanitized messages and the built-in query_data tool</text>
+  <text x="368" y="386" class="t">SQL: sqlglot validation → role authorization → read-only execution</text>
+  <text x="368" y="408" class="t">Disclosure rule: placeholder {x1} by default, value only if allowed</text>
+  <text x="368" y="430" class="t">Bounded by max_tool_iterations and max_bindings_per_request</text>
+
+  <!-- Phase 3: Outbound -->
+  <rect x="350" y="476" width="500" height="150" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="368" y="502" class="step">7–10</text>
+  <text x="406" y="502" class="h">Outbound</text>
+  <text x="832" y="502" class="code" text-anchor="end">agency/tool_authz.py · outbound/</text>
+  <text x="368" y="530" class="t">Client tool authorization: role, argument rules, egress</text>
+  <text x="368" y="552" class="t">Single-pass literal fill of placeholders</text>
+  <text x="368" y="574" class="t">Output filter on the answer and tool-call arguments</text>
+  <text x="368" y="596" class="t">Token usage recorded, exactly one audit record written</text>
+
+  <!-- Bottom zone: read API + memory -->
+  <rect x="350" y="644" width="242" height="112" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="366" y="668" class="h">Read API</text>
+  <text x="366" y="692" class="code">GET /metrics</text>
+  <text x="366" y="710" class="code">GET /policy/effective</text>
+  <text x="366" y="728" class="code">GET /health</text>
+  <text x="366" y="746" class="code">GET /audit/export</text>
+
+  <rect x="608" y="644" width="242" height="112" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="624" y="666" class="h">In memory</text>
+  <text x="624" y="688" class="t">Vault: masked originals,</text>
+  <text x="624" y="705" class="t">erased when the request ends</text>
+  <text x="624" y="727" class="t">Issued-value cache</text>
+  <text x="624" y="744" class="m">for history re-masking, TTL</text>
+
+  <!-- Phase connectors -->
+  <path d="M600,294 L600,308" class="line-blue" marker-end="url(#arrow-blue)"/>
+  <path d="M600,460 L600,474" class="line-blue" marker-end="url(#arrow-blue)"/>
+
+  <!-- ============ Left: Client and Dashboard ============ -->
+  <rect x="30" y="144" width="210" height="150" rx="10" fill="#ffffff" stroke="#8c959f" stroke-width="1.4" stroke-dasharray="5 4"/>
+  <text x="48" y="172" class="h">Client</text>
+  <text x="102" y="172" class="tag" fill="#6e7781">UNTRUSTED</text>
+  <text x="48" y="198" class="t">Any agent, app or MCP host</text>
+  <text x="48" y="220" class="t">Stock openai SDK</text>
+  <text x="48" y="242" class="t">Executes its own tools</text>
+  <text x="48" y="264" class="m">demo_agent/app.py</text>
+
+  <rect x="30" y="644" width="210" height="112" rx="10" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="48" y="672" class="h">Dashboard</text>
+  <text x="48" y="698" class="t">Streamlit, refreshes every 2 s</text>
+  <text x="48" y="720" class="t">No direct storage access</text>
+  <text x="48" y="742" class="m">dashboard/app.py</text>
+
+  <!-- Client -> Inbound -->
+  <path d="M240,198 L348,198" class="line" marker-end="url(#arrow)"/>
+  <text x="285" y="152" class="lbl" text-anchor="middle">POST</text>
+  <text x="285" y="168" class="lbl" text-anchor="middle">/v1/chat/</text>
+  <text x="285" y="184" class="lbl" text-anchor="middle">completions</text>
+  <!-- Outbound -> Client -->
+  <path d="M350,551 L285,551 L285,256 L242,256" class="line" marker-end="url(#arrow)"/>
+  <text x="135" y="336" class="lbl" text-anchor="middle">Response:</text>
+  <text x="135" y="352" class="lbl" text-anchor="middle">filtered answer,</text>
+  <text x="135" y="368" class="lbl" text-anchor="middle">authorized tool calls,</text>
+  <text x="135" y="384" class="lbl" text-anchor="middle">x-acl-verdict header</text>
+  <!-- Dashboard -> Read API -->
+  <path d="M240,700 L348,700" class="line" marker-end="url(#arrow)"/>
+  <text x="294" y="690" class="lbl" text-anchor="middle">HTTP</text>
+
+  <!-- ============ Right: Models ============ -->
+  <rect x="920" y="96" width="320" height="380" rx="12" fill="#ffffff" stroke="#8c959f" stroke-width="1.4" stroke-dasharray="5 4"/>
+  <text x="940" y="126" class="h">Models</text>
+  <text x="1000" y="126" class="tag" fill="#6e7781">UNTRUSTED</text>
+
+  <rect x="940" y="144" width="280" height="150" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="958" y="172" class="h">Judge model</text>
+  <text x="958" y="198" class="t">Local Ollama, qwen2.5:1.5b</text>
+  <text x="958" y="220" class="t">Scores new input for risk</text>
+  <text x="958" y="242" class="t">Reply parsed as a number only</text>
+  <text x="958" y="264" class="m">inbound/judge.py</text>
+
+  <rect x="940" y="310" width="280" height="150" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="958" y="338" class="h">Answer model</text>
+  <text x="958" y="364" class="t">Ollama qwen2.5:3b or any</text>
+  <text x="958" y="386" class="t">OpenAI-compatible API</text>
+  <text x="958" y="408" class="t">Writes text, proposes tool calls</text>
+  <text x="958" y="430" class="m">llm/client.py</text>
+
+  <!-- Inbound <-> Judge -->
+  <path d="M852,219 L938,219" class="line" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="895" y="209" class="lbl" text-anchor="middle">risk</text>
+  <!-- Loop <-> Answer -->
+  <path d="M852,385 L938,385" class="line" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="895" y="375" class="lbl" text-anchor="middle">calls</text>
+
+  <!-- ============ Right: Database ============ -->
+  <rect x="940" y="520" width="280" height="130" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="958" y="548" class="h">demo.db</text>
+  <text x="958" y="574" class="t">SQLite, opened read-only</text>
+  <text x="958" y="596" class="t">set_authorizer, progress handler</text>
+  <text x="958" y="618" class="m">binding/executor.py only</text>
+  <text x="958" y="636" class="m">products · employees · salaries</text>
+
+  <!-- Loop -> DB -->
+  <path d="M850,440 L895,440 L895,585 L938,585" class="line-blue" marker-end="url(#arrow-blue)"/>
+  <text x="903" y="508" class="lbl" fill="#0969da">SQL</text>
+
+  <!-- ============ Bottom: files ============ -->
+  <rect x="330" y="820" width="166" height="96" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="346" y="846" class="h">policy.yaml</text>
+  <text x="346" y="866" class="h">signatures.json</text>
+  <text x="346" y="890" class="m">reloaded on change,</text>
+  <text x="346" y="906" class="m">snapshot per request</text>
+
+  <rect x="517" y="820" width="166" height="96" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="533" y="846" class="h">state.db</text>
+  <text x="533" y="870" class="m">token and cost counters,</text>
+  <text x="533" y="888" class="m">request-rate window</text>
+
+  <rect x="704" y="820" width="166" height="96" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="720" y="846" class="h">logs/audit.jsonl</text>
+  <text x="720" y="870" class="m">one record per request,</text>
+  <text x="720" y="888" class="m">no raw values</text>
+
+  <path d="M413,818 L413,778" class="line" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+  <path d="M600,778 L600,818" class="line" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <path d="M787,778 L787,818" class="line" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="421" y="803" class="lbl">load</text>
+  <text x="608" y="803" class="lbl">check, record</text>
+  <text x="795" y="803" class="lbl">append, read</text>
+</svg>

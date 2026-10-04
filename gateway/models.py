@@ -220,6 +220,7 @@ class ChatRequest(BaseModel):
     model: str
     messages: list[ChatMessage]
     tools: list[dict[str, Any]] | None = None
+    stream: bool = False  # answered as buffered SSE: the full answer is checked first, then sent
 
 
 class ChatResponse(BaseModel):

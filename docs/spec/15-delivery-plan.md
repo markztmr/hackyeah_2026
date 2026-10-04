@@ -9,8 +9,8 @@ AM. We treat the earlier time as binding and confirm with the organizers on Disc
 The 50% phase-1 threshold means breadth across all five criteria beats depth in one.
 
 **Status (4 October 2026).** Ticked items are verified in the repository. Unticked items
-are either not built (scope rewrite, separate aggregate permissions, buffered SSE,
-hash-chained audit log) or happen outside the code and are not tracked here.
+are either not built (scope rewrite, separate aggregate permissions, hash-chained
+audit log) or happen outside the code and are not tracked here.
 
 ## Hour 1: model test
 
@@ -54,7 +54,7 @@ that use the placeholder, and median latency. The best model becomes `models.ans
 - [ ] Scope enforcement by rewrite
 - [ ] Separate aggregate permissions
 - [x] `fetch_feed` command
-- [ ] Buffered SSE for `stream: true`
+- [x] Buffered SSE for `stream: true`
 - [ ] Hash-chained audit log
 - [x] `all_denied_message`
 

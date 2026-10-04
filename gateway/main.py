@@ -5,6 +5,7 @@ stores (startup fails if either file is invalid), the issued-value cache and met
 """
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -22,7 +23,7 @@ from gateway.inbound.signatures import FeedStore
 from gateway.outbound import protected_index
 from gateway.llm import client as llm
 from gateway.llm import digests
-from gateway.models import ChatRequest, IssuedCache, Policy, SignatureFeed
+from gateway.models import ChatRequest, ChatResponse, IssuedCache, Policy, SignatureFeed
 from gateway.pipeline import GatewayError, audit_rejected_request, run_pipeline
 from gateway.policy.loader import PolicyStore, effective_policy, policy_path, setting
 from gateway.telemetry import Metrics
@@ -126,16 +127,38 @@ async def _unexpected(request: Request, exc: Exception) -> JSONResponse:
 
 
 @app.post(CHAT_PATH)
-def chat_completions(request: Request, req: ChatRequest, authorization: str | None = Header(default=None)) -> JSONResponse:
+def chat_completions(request: Request, req: ChatRequest, authorization: str | None = Header(default=None)) -> Response:
     """OpenAI-compatible entry point. Spec section 4, section 13."""
     policy, feed = _snapshots(request.app)
     response, verdict = run_pipeline(
         _bearer_key(authorization), req, policy, feed, request.app.state.cache, metrics=request.app.state.metrics,
     )
-    return JSONResponse(
-        content=response.model_dump(exclude_none=True),
-        headers={"x-acl-verdict": verdict, "x-acl-request-id": response.id},
-    )
+    headers = {"x-acl-verdict": verdict, "x-acl-request-id": response.id}
+    if req.stream:
+        return Response(_sse(response), media_type="text/event-stream",
+                        headers={**headers, "Cache-Control": "no-cache"})
+    return JSONResponse(content=response.model_dump(exclude_none=True), headers=headers)
+
+
+def _sse(response: ChatResponse) -> str:
+    """The finished answer as OpenAI ``chat.completion.chunk`` events (buffered SSE).
+
+    Formatting only: the pipeline has already run in full, output filter included, so a
+    streaming client receives exactly what a non-streaming one would. One chunk carries
+    the role, content and tool calls; the next carries ``finish_reason``; then ``[DONE]``.
+    """
+    choice = response.choices[0] if response.choices else {}
+    message = choice.get("message") or {}
+    calls = message.get("tool_calls") or []
+    delta: dict[str, Any] = {"role": "assistant", "content": message.get("content") or ""}
+    if calls:
+        delta["tool_calls"] = [{"index": i, **c} for i, c in enumerate(calls)]
+    base = {"id": response.id, "object": "chat.completion.chunk", "created": response.created,
+            "model": response.model}
+    finish = choice.get("finish_reason") or ("tool_calls" if calls else "stop")
+    events = [{**base, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
+              {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}]
+    return "".join("data: " + json.dumps(e, ensure_ascii=False) + "\n\n" for e in events) + "data: [DONE]\n\n"
 
 
 @app.get("/v1/models")

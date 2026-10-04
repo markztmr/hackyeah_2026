@@ -20,7 +20,7 @@ Each row is a test candidate. Behaviour is shown for the strict profile unless s
 | Allowed model's digest differs from the pinned digest | Model blocked; `/health` reports the mismatch. |
 | Budget exhausted | Blocked before any model call, with a clear budget message. |
 | Judge model unavailable or returns a non-number | Follows `semantic.on_failure`: block in strict, allow and flag in relaxed. |
-| Request asks for `stream: true` | The field is ignored and the answer is returned without streaming. The output filter needs the full text. Buffered SSE is not built. |
+| Request asks for `stream: true` | Buffered SSE: the pipeline runs in full (the output filter needs the whole text), then the answer is sent as `chat.completion.chunk` events and `[DONE]`. Auth failures stay JSON 401. |
 
 ## Model and tool loop stage
 

@@ -16,6 +16,8 @@ The gateway is a drop-in, OpenAI-compatible proxy (`POST /v1/chat/completions`).
 client = OpenAI(base_url="http://localhost:8000/v1", api_key="demo-anna")
 ```
 
+Streaming clients (`stream: true`) work too. The gateway checks the full answer first, then sends it as server-sent events.
+
 The core mechanism is **deferred data binding**. The model has no database access. To get data, it calls the built-in `query_data` tool with SQL. The gateway validates the query, authorizes it against the caller's role and executes it on a read-only connection. The model receives a placeholder such as `{x1}`, not the value. Once the model has finished, the gateway fills in the values the user is entitled to see.
 
 Identity is derived from the API key only. Nothing in a prompt, tool result or model output can change it.
@@ -38,7 +40,7 @@ Every request passes through the same ten steps:
 |                     | 2    | Model allowlist with digest pinning, budget pre-check                    |
 |                     | 3    | Detect secrets and PII, re-mask history, scan client tool definitions    |
 |                     | 4    | Injection phrases, signature feed, then the judge model                  |
-| Model and tool loop | 5    | Call the model with the built-in`query_data` tool                      |
+| Model and tool loop | 5    | Call the model with the built-in `query_data` tool                       |
 |                     | 6    | Validate, authorize and execute SQL; return a placeholder (bounded loop) |
 | Outbound            | 7    | Authorize client tool calls: role, argument rules, egress                |
 |                     | 8    | Fill placeholders in a single literal pass                               |
@@ -138,7 +140,7 @@ A request with an unknown API key returns HTTP 401. Every block returns HTTP 200
 
 ## Results
 
-- 1,408 tests pass in under a minute, with no network and no Ollama. A scripted stub model records every input, so tests assert that no hidden value ever reached a model.
+- 1,428 tests pass in under a minute, with no network and no Ollama, and none are skipped. 8 more run against a live Ollama. A scripted stub model records every input, so tests assert that no hidden value ever reached a model.
 - Gateway overhead with stub models (`python -m tests.bench`): about 11 ms median and 24 ms p95 per request. A blocked request takes under 4 ms (median).
 - OWASP Top 10 for LLM Applications (2025): 6 risks covered fully, 3 partially, 1 out of scope (LLM08, no RAG).
 
@@ -175,7 +177,7 @@ streamlit run demo_agent/app.py --server.port 8502
 | ----- | ---------- | ------------------------ | -------------- |
 | anna  | intern     | deny                     | `demo-anna`  |
 | marek | sales lead | allow, department scope  | `demo-marek` |
-| piotr | HR manager | allow, up to`internal` | `demo-piotr` |
+| piotr | HR manager | allow, up to `internal`  | `demo-piotr` |
 
 Other commands:
 
@@ -185,6 +187,43 @@ python -m tests.bench                     # latency per pipeline step
 python -m gateway.cli.scan_model <path>   # scan a model file
 python -m gateway.cli.fetch_feed <url>    # update the signature feed
 ```
+
+The first request after Ollama starts is slow while the models load. For a clean demo, stop the gateway and delete `state.db` and `logs/` (budget counters and audit log; both are recreated).
+
+## Configuration
+
+`policy.yaml` is the single source of truth: users, roles, data labels, tools, controls, budgets and allowed models. The gateway checks the file's modification time on every request, so a saved change applies to the next request without a restart.
+
+`profile` sets the defaults for every control. A value written in the file overrides its profile default.
+
+| Setting                         | strict          | balanced           | relaxed            |
+| ------------------------------- | --------------- | ------------------ | ------------------ |
+| Judge block threshold           | 0.70            | 0.80               | 0.90               |
+| Judge unavailable               | block           | block              | allow and flag     |
+| Secrets in a prompt             | block           | redact             | redact             |
+| PII in a prompt                 | redact          | redact             | log                |
+| Injection phrases               | block           | block              | log                |
+| Marker for a denied value       | `[UNAVAILABLE]` | `[NOT AUTHORIZED]` | `[NOT AUTHORIZED]` |
+| `SELECT *`                      | reject          | expand             | expand             |
+| Tool loop iterations            | 3               | 4                  | 6                  |
+| Default tokens per user per day | 20,000          | 50,000             | 200,000            |
+
+Rules that keep live edits safe:
+
+- A control deleted from the file falls back to its profile value. It is never silently turned off.
+- `mode: off` disables a control explicitly. The dashboard shows it in red.
+- Core controls (authentication, SQL validation, authorization, the read-only executor, fill and audit) cannot be disabled. A policy that tries is rejected.
+- An invalid file is rejected and the last valid policy stays active. The dashboard shows the error.
+
+Budgets are set per user under `budgets.default` and can be overridden per role (`budgets.hr_manager`): tokens per day, requests per minute and cost per day. `pricing_per_1k_tokens` prices local and external models. `models.allowed` lists the models a client may request, pinned by digest. The file also contains a commented example of an external, OpenAI-compatible model.
+
+Try it on the running gateway:
+
+1. Set `prompt_controls.semantic.block_threshold` to `0.95`, save, and send a borderline prompt.
+2. Change `markers.denied` to `"[NOT AUTHORIZED]"` and ask Anna's CEO question again.
+3. Delete the `injection` line under `prompt_controls` and check the dashboard: the control is now inherited from the profile.
+4. Set `budgets.default.tokens_per_day` to `100`: the next request is blocked before any model call.
+5. Break the YAML syntax: requests keep working on the last valid policy, and the dashboard's posture panel reports the rejected file within 30 seconds.
 
 ## Project structure
 

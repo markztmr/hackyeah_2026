@@ -71,7 +71,7 @@ slides.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /v1/chat/completions` | OpenAI-compatible entry point. Header `Authorization: Bearer <user api key>`. Accepts `messages`, `tools`, `model`. |
+| `POST /v1/chat/completions` | OpenAI-compatible entry point. Header `Authorization: Bearer <user api key>`. Accepts `messages`, `tools`, `model`, `stream`. With `stream: true` the checked answer is sent as buffered SSE (`chat.completion.chunk` events, then `[DONE]`). |
 | `GET /v1/models` | Allowed models, so stock clients can list them. |
 | `GET /health` | Liveness, policy and feed versions, model reachability and digest status (`digests.ok`, per model `status`, `pinned`, `installed`; a fresh check). |
 | `GET /metrics` | Dashboard sections computed from the audit log, one independent key each: `requests_by_verdict`, `blocks_by_control` (today, UTC), `tokens_and_cost_by_user` (today, with budget limits), `last_requests` (newest 50); `blocks_by_signature_category` (today; signature IDs in blocking `signatures` reasons mapped to the current feed's categories, unknown IDs as `unknown`), `blocks_over_time` (60 per-minute buckets `{minute, requests, blocks}`, oldest first), `blocks_by_user` (today), `binding_outcomes_by_role_and_table` (today; role -> table -> resolved/denied/rejected/empty/error), `tool_decisions_by_tool` (today; tool -> allow/deny), `latency_by_step` (today; step -> median_ms, p95_ms nearest rank, count; `total` last). New sections are new keys. |

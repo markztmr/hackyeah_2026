@@ -22,3 +22,9 @@ primaryColor = "#94a3b8"
 
 [client]
 toolbarMode = "minimal"
+
+[server]
+# `streamlit run app.py` serves the agent and the dashboard on one port, ready for one tunnel.
+headless = true
+port = 8501
+address = "127.0.0.1"  # reachable only through the tunnel

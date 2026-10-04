@@ -27,6 +27,7 @@ Each row is a test candidate. Behaviour is shown for the strict profile unless s
 | Case | Expected behaviour |
 | --- | --- |
 | Model never calls `query_data` for a data question | Answer passes as plain text through the output filter. Guessed protected values are redacted. |
+| Model returns an empty answer (no text, no tool call) | Asked once more through the same budget check, inside `max_tool_iterations`. Still empty: the user gets a fixed notice ("The model returned an empty answer. Please try again or rephrase the question."); verdict stays `allow`; both events are noted in the audit record. |
 | Model calls `query_data` with invalid arguments (missing `sql`) | Binding `rejected`; placeholder returned; logged. |
 | Model keeps calling tools | Stops at `max_tool_iterations`; one last call with tools disabled; then the answer is filled. |
 | More than `max_bindings_per_request` calls | Extra calls are `rejected` without execution. |

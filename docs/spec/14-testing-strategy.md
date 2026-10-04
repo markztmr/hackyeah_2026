@@ -46,13 +46,13 @@ Further files cover the rest of the code:
 | --- | --- |
 | Red team | `test_redteam_inbound.py`, `test_redteam_authorizer.py`, `test_redteam_tool_authz.py` |
 | MCP tools | `test_mcp_tools.py`: calls, arguments, egress, poisoned descriptions and results of `mcp__<server>__<tool>` tools |
-| Pipeline and endpoints | `test_pipeline.py`, `test_endpoints.py`, `test_streaming.py`, `test_inbound.py`, `test_smoke.py` |
+| Pipeline and endpoints | `test_pipeline.py`, `test_endpoints.py`, `test_streaming.py`, `test_empty_answer.py`, `test_inbound.py`, `test_smoke.py` |
 | Data access | `test_scope_department.py`, `test_protected_index.py`, `test_vault.py`, `test_seed.py` |
 | Models | `test_llm_client.py`, `test_external_model.py`, `test_prompts.py`, `test_stub_model.py`, `test_llm_live.py` (live) |
 | Feed | `test_fetch_feed.py` |
 | Reporting | `test_metrics.py`, `test_dashboard.py`, `test_demo_agent.py`, `test_bench.py` |
 
-Current result: `1437 passed, 8 deselected`, nothing skipped (the 8 deselected are the live tests; `pytest -m live` runs them).
+Current result: `1445 passed, 8 deselected`, nothing skipped (the 8 deselected are the live tests; `pytest -m live` runs them).
 
 **Telemetry check.** `python -m tests.bench` sends a fixed prompt set and reports median
 and p95 latency per pipeline step, for the slides and the performance criterion.

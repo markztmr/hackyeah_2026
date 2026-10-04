@@ -61,6 +61,7 @@ from gateway.telemetry import Metrics, StepTimer
 log = logging.getLogger(__name__)
 
 _SEVERITY: dict[str, int] = {"allow": 0, "log": 1, "redact": 2, "block": 3}
+EMPTY_ANSWER = "The model returned an empty answer. Please try again or rephrase the question."
 
 
 class GatewayError(Exception):
@@ -416,6 +417,11 @@ def _run(
             record.verdict = "block"
             return _response(record.request_id, model_name, message, [],
                              record.prompt_tokens, record.completion_tokens)
+        if not answer.strip() and not calls:
+            # Never hand a client a blank answer: it looks like the turn vanished. Gateway text,
+            # not model or database text, so nothing here needs fill or the output filter.
+            record.decisions.append(Decision("record", "models.answer", "allow", "The model returned an empty answer."))
+            answer = EMPTY_ANSWER
         record.verdict = _final_verdict(record)
         return _response(record.request_id, model_name, answer, calls, record.prompt_tokens, record.completion_tokens)
     except _Blocked as b:

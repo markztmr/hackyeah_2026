@@ -175,7 +175,7 @@ The host's own traffic to the MCP server does not pass through the gateway. A de
 
 ## Results
 
-- 1,437 tests pass in under a minute, with no network and no Ollama, and none are skipped. 8 more run against a live Ollama. A scripted stub model records every input, so tests assert that no hidden value ever reached a model.
+- 1,445 tests pass in under a minute, with no network and no Ollama, and none are skipped. 8 more run against a live Ollama. A scripted stub model records every input, so tests assert that no hidden value ever reached a model.
 - Gateway overhead with stub models (`python -m tests.bench`): about 11 ms median and 24 ms p95 per request. A blocked request takes under 4 ms (median).
 - OWASP Top 10 for LLM Applications (2025): 6 risks covered fully, 3 partially, 1 out of scope (LLM08, no RAG).
 

@@ -295,6 +295,8 @@ def _show(meta: dict[str, Any] | None, content: str) -> None:
     verdict = (meta or {}).get("verdict")
     if verdict == "block":
         st.error("Blocked by the gateway: " + content.removeprefix(BLOCK_PREFIX), icon=":material/block:")
+    elif not content.strip():
+        st.caption("(empty answer from the gateway)")  # a turn must never look like it vanished
     else:
         st.markdown(content)
     if verdict:
@@ -371,9 +373,9 @@ def main() -> None:
     for i, m in enumerate(history):
         if m["role"] == "user":
             st.chat_message("user").markdown(m["content"])
-        elif m["role"] == "assistant" and m.get("content"):
-            with st.chat_message("assistant"):
-                _show(meta.get(i), m["content"])
+        elif m["role"] == "assistant" and (m.get("content") or not m.get("tool_calls")):
+            with st.chat_message("assistant"):  # final answers, even empty; tool-call rounds stay hidden
+                _show(meta.get(i), m.get("content") or "")
         elif m["role"] == "tool":
             st.chat_message("assistant", avatar=":material/build:").caption("Tool result: " + m["content"])
 

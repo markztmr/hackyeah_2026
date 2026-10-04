@@ -214,10 +214,19 @@ def run_tool_loop(
             return None
         return reply
 
+    retried_empty = False
     for _ in range(max_iterations):
         reply = ask(tools)
         if reply is None:
             return result
+        # A small model sometimes returns nothing at all. Ask once more, inside the same
+        # iteration bound and through ask(), so the budget is checked before the retry.
+        if not reply.tool_calls and not (reply.content or "").strip() and not retried_empty:
+            retried_empty = True
+            # "allow": a note for the audit record that does not change the request's verdict.
+            result.decisions.append(Decision(STAGE, "models.answer", "allow",
+                                             "The model returned an empty answer; asked once more."))
+            continue
         if not any(c.name == QUERY_DATA for c in reply.tool_calls):
             return _finish(result, reply)
 

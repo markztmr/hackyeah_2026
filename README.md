@@ -4,6 +4,11 @@ A policy-enforcing security gateway between AI agents and LLMs. The model writes
 
 Built at HackYeah 2026 for the "AI Control Layer" open task.
 
+<img width="1539" height="972" alt="image" src="https://github.com/user-attachments/assets/5d582487-114e-44bf-b161-64cb00f287f2" />
+
+<img width="1540" height="970" alt="image" src="https://github.com/user-attachments/assets/1d423b9e-7ae1-4d94-a5a9-a31abbacc94d" />
+
+
 ## The problem
 
 Companies want AI agents to answer questions over internal data. An LLM cannot enforce access control: a prompt injection or a well-phrased question is enough to make it disclose data the user is not authorized to see.

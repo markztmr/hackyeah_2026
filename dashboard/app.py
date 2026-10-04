@@ -14,6 +14,7 @@ use the one accent colour, and every panel at most one screen tall.
 """
 from __future__ import annotations
 
+import html
 import os
 from typing import Any
 
@@ -28,18 +29,46 @@ HEALTH_TTL_S = 30
 DEFAULT_REFRESH_S = 2
 PENDING = "pending"
 DOWN = "down"
-ACCENT = "#d62728"  # blocks, denials, "off": the only colour that draws the eye
-NEUTRAL = "#7f8c99"
+ACCENT = "#dc2626"  # blocks, denials, "off": the only colour that draws the eye
+NEUTRAL = "#94a3b8"
+DARK = "#334155"
 PANEL_HEIGHT = 360  # px; tables and charts stay well inside one projector screen
 BINDING_STATUSES = ("resolved", "denied", "rejected", "empty", "error")
 CSS = f"""
 <style>
-[data-testid="stMetricValue"] {{ font-size: 3rem; line-height: 1.1; }}
-[data-testid="stMetricLabel"] p {{ font-size: 1.1rem; }}
-h3 {{ margin-top: 0.6rem; }}
+header[data-testid="stHeader"] {{ background: transparent; }}
+.block-container {{ padding-top: 2.2rem; max-width: 1600px; }}
+.acl-hero {{ display: flex; align-items: center; gap: 1.1rem; padding: 1.4rem 1.8rem; margin-bottom: 1.2rem;
+  border-radius: 1.1rem; color: #f8fafc; background: linear-gradient(120deg, #0f172a 0%, #1e293b 55%, #334155 100%);
+  box-shadow: 0 10px 30px -12px rgba(15, 23, 42, .45); }}
+.acl-hero svg {{ flex: none; }}
+.acl-hero h1 {{ margin: 0; padding: 0; font-size: 2rem; font-weight: 800; letter-spacing: -.02em; color: #f8fafc; }}
+.acl-hero p {{ margin: .15rem 0 0; color: #cbd5e1; font-size: 1rem; }}
+.acl-hero .acl-url {{ margin-left: auto; padding: .35rem .8rem; border-radius: 999px; font-size: .85rem;
+  background: rgba(148, 163, 184, .18); color: #e2e8f0; border: 1px solid rgba(148, 163, 184, .35); }}
+[class*="st-key-panel_"] {{ background: #ffffff; border: 1px solid #e2e8f0; border-radius: 1rem;
+  padding: 1.1rem 1.3rem 1.3rem; box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 8px 24px -16px rgba(15, 23, 42, .18); }}
+[class*="st-key-panel_"] h3 {{ margin-top: 0; padding-top: 0; font-weight: 700; letter-spacing: -.01em; }}
+[data-testid="stMetric"] {{ background: #ffffff; border-radius: .9rem; padding: 1rem 1.2rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04), 0 8px 24px -18px rgba(15, 23, 42, .25); }}
+[data-testid="stMetricValue"] {{ font-size: 2.8rem; line-height: 1.1; font-weight: 800; letter-spacing: -.02em; }}
+[data-testid="stMetricLabel"] p {{ font-size: .85rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .06em; color: #64748b; }}
+[class*="st-key-panel_posture"] [data-testid="stMetricValue"] {{ font-size: 1.6rem; }}
+[class*="st-key-panel_"] [data-testid="stMetric"] {{ background: #f8fafc; box-shadow: none;
+  border: 1px solid #e2e8f0; }}
+.st-key-blocked_total [data-testid="stMetric"] {{ border-left: 5px solid {ACCENT}; }}
 .st-key-blocked_total [data-testid="stMetricValue"] {{ color: {ACCENT}; }}
+[data-testid="stCaptionContainer"] p {{ font-weight: 500; color: #64748b; }}
+.acl-status {{ display: inline-flex; align-items: center; gap: .45rem; font-size: .9rem; color: #475569; }}
+.acl-dot {{ width: .6rem; height: .6rem; border-radius: 50%; background: #22c55e;
+  box-shadow: 0 0 0 4px rgba(34, 197, 94, .18); }}
+.acl-dot.down {{ background: {ACCENT}; box-shadow: 0 0 0 4px rgba(220, 38, 38, .18); }}
 </style>
 """
+SHIELD = ('<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#e2e8f0" stroke-width="1.8" '
+          'stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.5-7 10-4-1.5-7-5.5-7-10V6z"/>'
+          '<path d="M9 12l2 2 4-4"/></svg>')
 
 
 def fetch(path: str, timeout: float = TIMEOUT_S) -> tuple[Any, str | None]:
@@ -213,6 +242,27 @@ def _red_off(value: Any) -> str:
     return f"color: {ACCENT}; font-weight: 700" if value == "off" else ""
 
 
+def _verdict_style(value: Any) -> str:
+    """Blocks in the accent colour; every other verdict stays grey."""
+    return f"color: {ACCENT}; font-weight: 700" if value == "block" else "color: #64748b; font-weight: 600"
+
+
+def _hero() -> None:
+    st.markdown(
+        '<div class="acl-hero">' + SHIELD + '<div><h1>AI Control Layer</h1>'
+        "<p>Security gateway for every model call: posture, threats, data access and cost, live.</p></div>"
+        '<span class="acl-url">' + html.escape(GATEWAY_URL) + "</span></div>",
+        unsafe_allow_html=True)
+
+
+def _status(problem: str | None, refresh: float) -> None:
+    if problem is None:
+        text, dot = f"Live · refreshes every {refresh:g} s", "acl-dot"
+    else:
+        text, dot = "Gateway unavailable · retrying", "acl-dot down"
+    st.markdown(f'<span class="acl-status"><span class="{dot}"></span>{text}</span>', unsafe_allow_html=True)
+
+
 def _posture(effective: Any, problem: str | None, health: Any) -> None:
     st.subheader("Posture")
     if problem == PENDING:
@@ -250,7 +300,9 @@ def _live_feed(metrics: dict[str, Any]) -> None:
     st.subheader("Live feed")
     rows = feed_rows(metrics)
     if rows:
-        st.dataframe(rows, hide_index=True, height=PANEL_HEIGHT, use_container_width=True)
+        shown = [{**r, "time": str(r["time"] or "")[11:19]} for r in rows]  # HH:MM:SS (UTC)
+        table = pd.DataFrame(shown).style.map(_verdict_style, subset=["verdict"])
+        st.dataframe(table, hide_index=True, height=min(PANEL_HEIGHT, 38 + 35 * len(rows)), use_container_width=True)
     else:
         st.caption("No requests yet.")
 
@@ -308,10 +360,10 @@ def _consumption(metrics: dict[str, Any]) -> None:
         users.markdown("**No usage yet**")
     for r in rows:
         token_limit = f"{int(r['token_limit']):,}" if r["token_limit"] else "?"
-        cost_limit = f"${float(r['cost_limit']):.2f}" if r["cost_limit"] else "?"
+        cost_limit = f"\\${float(r['cost_limit']):.2f}" if r["cost_limit"] else "?"  # \\$: not LaTeX
         users.markdown(f"**{r['user']}** ({r['role']})")
         users.progress(r["token_share"], text=f"{r['tokens']:,} / {token_limit} tokens")
-        users.progress(r["cost_share"], text=f"${r['cost_usd']:.4f} / {cost_limit}")
+        users.progress(r["cost_share"], text=f"\\${r['cost_usd']:.4f} / {cost_limit}")
     rate.caption("Requests per minute, last hour (UTC)")
     _minute_chart(rate, metrics, "requests", NEUTRAL, 240)
 
@@ -324,7 +376,7 @@ def _performance(metrics: dict[str, Any]) -> None:
         return
     table, chart = st.columns([2, 3])
     table.dataframe(rows, hide_index=True, height=min(PANEL_HEIGHT, 38 + 35 * len(rows)), use_container_width=True)
-    chart.bar_chart(rows, x="step", y=["median ms", "p95 ms"], color=[NEUTRAL, "#2c3e50"], horizontal=True,
+    chart.bar_chart(rows, x="step", y=["median ms", "p95 ms"], color=[NEUTRAL, DARK], horizontal=True,
                     stack=False, height=PANEL_HEIGHT)
 
 
@@ -335,33 +387,42 @@ def _export() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="AI Control Layer", layout="wide")
+    st.set_page_config(page_title="AI Control Layer", page_icon=":material/shield:", layout="wide")
     st.markdown(CSS, unsafe_allow_html=True)
-    st.title("AI Control Layer")
+    _hero()
     effective, _ = fetch("/policy/effective")
+    refresh = refresh_seconds(effective)
 
-    @st.fragment(run_every=refresh_seconds(effective))
+    @st.fragment(run_every=refresh)
     def live() -> None:
         effective, policy_problem = fetch("/policy/effective")
         metrics, metrics_problem = fetch("/metrics")
         health, _ = fetch_health()
         problem = next((p for p in (metrics_problem, policy_problem) if p not in (None, PENDING)), None)
+        _status(problem, refresh)
         if problem is not None:
             _banner(problem)
         if metrics is not None:
             _totals(metrics)
-        _posture(effective, policy_problem, health)
+        with st.container(key="panel_posture"):
+            _posture(effective, policy_problem, health)
         if metrics is None:
             st.caption("Metrics unavailable" + (" (pending)." if metrics_problem == PENDING else "."))
             return
-        _live_feed(metrics)
-        _threats(metrics)
-        _data_access(metrics)
-        _consumption(metrics)
-        _performance(metrics)
+        with st.container(key="panel_feed"):
+            _live_feed(metrics)
+        with st.container(key="panel_threats"):
+            _threats(metrics)
+        with st.container(key="panel_data"):
+            _data_access(metrics)
+        with st.container(key="panel_consumption"):
+            _consumption(metrics)
+        with st.container(key="panel_performance"):
+            _performance(metrics)
 
     live()
-    _export()
+    with st.container(key="panel_export"):
+        _export()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,24 @@
+# Shared look for the dashboard and the demo agent (run streamlit from the repo root).
+# Slate greys everywhere; the dashboard keeps red as its one accent for blocks and denials.
+
+[theme]
+base = "light"
+primaryColor = "#334155"
+backgroundColor = "#f5f7fb"
+secondaryBackgroundColor = "#eef1f6"
+textColor = "#0f172a"
+borderColor = "#e2e8f0"
+linkColor = "#334155"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+baseRadius = "0.75rem"
+showWidgetBorder = true
+
+[theme.sidebar]
+backgroundColor = "#0f172a"
+secondaryBackgroundColor = "#1e293b"
+textColor = "#e2e8f0"
+borderColor = "#1e293b"
+primaryColor = "#94a3b8"
+
+[client]
+toolbarMode = "minimal"

@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import json
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -127,4 +128,26 @@ def test_page_renders_and_survives_a_gateway_that_is_down(monkeypatch: pytest.Mo
     assert at.sidebar.selectbox[0].options == ["anna", "marek", "piotr"]
     at.chat_input[0].set_value("Hello").run()
     assert not at.exception
+    assert any("unreachable" in e.value for e in at.error)
+
+
+def test_empty_conversation_offers_the_worked_examples_and_sends_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    from streamlit.testing.v1 import AppTest
+
+    import openai
+
+    sent: list[Any] = []
+
+    def refuse(self: object, **kwargs: Any) -> None:
+        sent.append(kwargs["messages"][-1]["content"])
+        raise openai.APIConnectionError(request=httpx.Request("POST", "http://localhost:8000/v1/chat/completions"))
+
+    monkeypatch.setattr(openai.resources.chat.completions.Completions, "create", refuse)
+    at = AppTest.from_file(str(REPO_ROOT / "demo_agent" / "app.py"), default_timeout=20)
+    at.run()
+    buttons = {b.label: b for b in at.button}
+    assert set(agent.SUGGESTIONS) <= set(buttons)
+    buttons["My salary and the CEO's"].click().run()
+    assert not at.exception
+    assert sent == [agent.SUGGESTIONS["My salary and the CEO's"]]
     assert any("unreachable" in e.value for e in at.error)

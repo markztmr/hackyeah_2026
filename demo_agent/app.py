@@ -170,42 +170,102 @@ def chat_turn(client: OpenAI, history: list[dict[str, Any]], user_text: str) -> 
 # ---------------------------------------------------------------------------
 
 
+ROLES = {"anna": "Intern · sales", "marek": "Sales lead · sales", "piotr": "HR manager · HR"}  # labels only
+SUGGESTIONS = {  # the worked examples of spec section 4
+    "My salary and the CEO's": "What is my salary and what does the CEO earn?",
+    "Sales headcount and pay": "How many people work in sales, and what is their average salary?",
+    "Email an outside address": "Email the Q3 numbers to partner@example.com.",
+    "Tell me a joke": "Tell me a joke.",
+}
+CSS = """
+<style>
+header[data-testid="stHeader"] { background: transparent; }
+.block-container { padding-top: 2.2rem; max-width: 820px; }
+.agent-hero { padding: 1.3rem 1.6rem; border-radius: 1.1rem; margin-bottom: 1.2rem; color: #f8fafc;
+  background: linear-gradient(120deg, #0f172a 0%, #1e293b 60%, #334155 100%);
+  box-shadow: 0 10px 30px -12px rgba(15, 23, 42, .45); }
+.agent-hero h1 { margin: 0; padding: 0; font-size: 1.7rem; font-weight: 800; letter-spacing: -.02em; color: #f8fafc; }
+.agent-hero p { margin: .25rem 0 0; color: #cbd5e1; font-size: .95rem; }
+.agent-hero code { color: #e2e8f0; background: rgba(148, 163, 184, .2); padding: .1rem .4rem; border-radius: .4rem; }
+[data-testid="stChatMessage"] { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 1rem;
+  padding: .9rem 1.1rem; box-shadow: 0 1px 2px rgba(15, 23, 42, .04); }
+[data-testid="stSidebar"] h2 { font-size: 1.05rem; letter-spacing: .02em; }
+.agent-role { color: #94a3b8; font-size: .9rem; margin-top: -.4rem; }
+</style>
+"""
+
+
+def _show(meta: dict[str, Any] | None, content: str) -> None:
+    """One assistant answer, with the gateway's verdict as a badge."""
+    import streamlit as st
+
+    verdict = (meta or {}).get("verdict")
+    if verdict == "block":
+        st.error("Blocked by the gateway: " + content.removeprefix(BLOCK_PREFIX), icon=":material/block:")
+    else:
+        st.markdown(content)
+    if verdict:
+        color = {"block": "red", "allow": "green"}.get(verdict, "orange")
+        rid = (meta or {}).get("request_id")
+        st.badge("x-acl-verdict: " + verdict, color=color, icon=":material/shield:")
+        if rid:
+            st.caption("request " + rid)
+
+
 def main() -> None:
     import streamlit as st
 
-    st.set_page_config(page_title="Demo agent", layout="centered")
-    st.title("Demo agent")
-    st.caption("Stock OpenAI SDK with base_url=http://localhost:8000/v1. No security logic: the gateway decides.")
-    user = st.sidebar.selectbox("User", list(USERS))
-    histories: dict[str, list[dict[str, Any]]] = st.session_state.setdefault("histories", {})
-    history = histories.setdefault(user, [])
-    if st.sidebar.button("New conversation"):
-        history.clear()
+    st.set_page_config(page_title="Demo agent", page_icon=":material/smart_toy:", layout="centered")
+    st.markdown(CSS, unsafe_allow_html=True)
+    st.markdown(
+        '<div class="agent-hero"><h1>Demo agent</h1><p>Stock OpenAI SDK with '
+        "<code>base_url=http://localhost:8000/v1</code>. No security logic here: the gateway decides.</p></div>",
+        unsafe_allow_html=True)
 
-    for m in history:
+    st.sidebar.header("Signed in as")
+    user = st.sidebar.selectbox("User", list(USERS), label_visibility="collapsed")
+    st.sidebar.markdown(f'<div class="agent-role">{ROLES[user]} · key <code>{USERS[user]}</code></div>',
+                        unsafe_allow_html=True)
+    histories: dict[str, list[dict[str, Any]]] = st.session_state.setdefault("histories", {})
+    metas: dict[str, dict[int, dict[str, Any]]] = st.session_state.setdefault("metas", {})
+    history, meta = histories.setdefault(user, []), metas.setdefault(user, {})
+    st.sidebar.divider()
+    if st.sidebar.button("New conversation", icon=":material/add_comment:", use_container_width=True):
+        history.clear()
+        meta.clear()
+    st.sidebar.caption("Tools offered to the model: send_email, create_ticket (fakes that only print).")
+
+    for i, m in enumerate(history):
         if m["role"] == "user":
-            st.chat_message("user").write(m["content"])
+            st.chat_message("user").markdown(m["content"])
         elif m["role"] == "assistant" and m.get("content"):
-            st.chat_message("assistant").write(m["content"])
+            with st.chat_message("assistant"):
+                _show(meta.get(i), m["content"])
         elif m["role"] == "tool":
             st.chat_message("assistant", avatar=":material/build:").caption("Tool result: " + m["content"])
 
     prompt = st.chat_input("Ask as " + user)
+    if not history and not prompt:
+        st.caption("Try one of the worked examples")
+        for column, (label, text) in zip(st.columns(2), list(SUGGESTIONS.items())[:2]):
+            if column.button(label, use_container_width=True):
+                prompt = text
+        for column, (label, text) in zip(st.columns(2), list(SUGGESTIONS.items())[2:]):
+            if column.button(label, use_container_width=True):
+                prompt = text
     if not prompt:
         return
-    st.chat_message("user").write(prompt)
-    turn = chat_turn(make_client(USERS[user]), history, prompt)
-    with st.chat_message("assistant"):
-        for action in turn.actions:
-            st.info(action)
-        if turn.error:
-            st.error(turn.error)
-        elif turn.verdict == "block":
-            st.error("Blocked by the gateway: " + (turn.reason or ""))
-        else:
-            st.write(turn.answer)
-        if turn.verdict:
-            st.caption("x-acl-verdict: " + turn.verdict + (" · request " + turn.request_ids[-1] if turn.request_ids else ""))
+    st.chat_message("user").markdown(prompt)
+    with st.chat_message("assistant"), st.spinner("Waiting for the gateway..."):
+        turn = chat_turn(make_client(USERS[user]), history, prompt)
+    if turn.error:
+        with st.chat_message("assistant"):
+            st.error(turn.error, icon=":material/cloud_off:")
+        return
+    if history and history[-1]["role"] == "assistant":
+        meta[len(history) - 1] = {"verdict": turn.verdict,
+                                  "request_id": turn.request_ids[-1] if turn.request_ids else None}
+    st.rerun()
 
 
 if __name__ == "__main__":

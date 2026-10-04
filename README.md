@@ -22,6 +22,8 @@ This README follows the assessment template suggested by the mentors. Each part 
 
 <img width="800" height="425" alt="ezgif-8d9a7848884b1b11" src="https://github.com/user-attachments/assets/57e4beaf-20cd-43f0-9f18-8e40bc1f175d" />
 
+---
+
 <img width="1540" height="970" alt="Demo agent" src="https://github.com/user-attachments/assets/1d423b9e-7ae1-4d94-a5a9-a31abbacc94d" />
 
 ### The problem

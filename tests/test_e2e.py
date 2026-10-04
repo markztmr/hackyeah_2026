@@ -6,9 +6,6 @@ execute -> disclose chain, client tool authorization, fill, output filter and au
 Only the models are scripted stubs; the ``live`` versions of A and C use the real
 answer and judge models in Ollama.
 
-Step 3 (``inspect_inbound``, Person 2) has not landed and raises NotImplementedError.
-``assembled_inbound`` stands in with the same real pieces as ``scripts/dev_serve.py``:
-the masker, history re-masking and the tool-definition scan. Drop the fixture when it lands.
 """
 from __future__ import annotations
 
@@ -20,7 +17,6 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from gateway import pipeline
 from gateway.llm import client as llm
 from gateway.llm.client import StubCall, StubModel, text, tool_call
 from gateway.policy.loader import setting
@@ -45,14 +41,6 @@ def forms(value: float) -> tuple[str, ...]:
     whole = str(int(value))
     grouped = f"{int(value):,}"
     return (str(value), whole, grouped, grouped.replace(",", " "), grouped.replace(",", "."))
-
-
-@pytest.fixture(autouse=True)
-def assembled_inbound(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Step 3 from its real parts until ``gateway.inbound.masker.inspect_inbound`` lands."""
-    from scripts import dev_serve
-
-    monkeypatch.setattr(pipeline, "inspect_inbound", dev_serve.inspect_inbound)
 
 
 def query(sql: str, purpose: str = "worked example") -> Any:

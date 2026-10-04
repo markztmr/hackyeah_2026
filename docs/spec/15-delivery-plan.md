@@ -21,7 +21,7 @@ that use the placeholder, and median latency. The best model becomes `models.ans
 ## Tier 1: MVP (H1 to H10)
 
 - [ ] Auth and policy loader with reload, version hash and validation
-- [ ] Masker (secrets, PII) and injection phrase list
+- [x] Masker (secrets, PII) and injection phrase list
 - [ ] Signature feed matching on input, tool results and model output
 - [ ] Proxy pass-through for plain chat
 - [ ] Client tool authorization with argument rules

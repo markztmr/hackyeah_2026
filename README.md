@@ -23,15 +23,10 @@ ollama run qwen2.5:3b "hi"             # warm it up; the first call after a cold
 Then, in three terminals:
 
 ```bash
-ACL_DEV_SHIM=1 python scripts/dev_serve.py           # gateway on :8000 (PowerShell: $env:ACL_DEV_SHIM=1)
+uvicorn gateway.main:app --port 8000                  # gateway on :8000
 streamlit run demo_agent/app.py                       # chat as anna / marek / piotr
 streamlit run dashboard/app.py --server.port 8501     # posture, live feed, totals, export
 ```
-
-`scripts/dev_serve.py` is temporary: the inbound step is not fully built yet, so it
-stands in for the judge (allows everything), history re-masking and issued-value
-recording, and uses the real masker and tool-definition scan. Once those land, run
-`uvicorn gateway.main:app --port 8000` instead.
 
 ## Model choice
 

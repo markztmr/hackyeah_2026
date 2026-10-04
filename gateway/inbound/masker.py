@@ -17,6 +17,7 @@ import re
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from gateway.models import (
@@ -27,9 +28,11 @@ from gateway.models import (
     Policy,
     Principal,
     SanitizedRequest,
+    SignatureFeed,
     Vault,
 )
-from gateway.policy.loader import setting
+from gateway.inbound.signatures import FeedStore
+from gateway.policy.loader import policy_path, setting
 
 STAGE = "inbound"
 
@@ -331,5 +334,32 @@ def masking_decisions(findings: list[Finding]) -> list[Decision]:
 def inspect_inbound(
     req: ChatRequest, p: Principal, policy: Policy, cache: IssuedCache
 ) -> tuple[SanitizedRequest, Vault, list[Decision]]:
-    """Mask user messages and tool results, re-mask history, scan tool definitions. Spec section 4 step 3a-3d."""
-    raise NotImplementedError
+    """Mask user messages and tool results, re-mask history, scan tool definitions. Spec section 4 step 3a-3d.
+
+    History re-masking (3c) runs first, so a value issued earlier is replaced by the
+    prior-value marker before the masker could turn it into a mask token. Then every
+    message, whatever its role, is masked (3a-3b); tool results stay ``role: tool`` and
+    are checked on surface ``tool_result`` in step 4. Tool definitions are scanned
+    against the feed named by the policy (3d); an unreadable feed raises (fail closed).
+    """
+    from gateway.inbound.history import remask_history  # history and injection import this module
+    from gateway.inbound.injection import scan_tool_definitions
+
+    messages, _ = remask_history([m.model_dump(exclude_none=True) for m in req.messages], p, cache, policy)
+    messages, vault, findings = mask_messages(messages, policy)
+    tools = list(req.tools or [])
+    decisions = masking_decisions(findings)
+    if tools:
+        decisions.append(scan_tool_definitions(tools, policy, _feed(policy)))
+    return SanitizedRequest(messages=messages, tools=tools, findings=findings), vault, decisions
+
+
+_FEEDS: dict[Path, FeedStore] = {}
+
+
+def _feed(policy: Policy) -> SignatureFeed:
+    """The feed named by ``prompt_controls.signatures.feed``, relative to the policy file; reloads by mtime."""
+    path = Path(setting(policy, "prompt_controls.signatures.feed"))
+    if not path.is_absolute():
+        path = policy_path().parent / path
+    return _FEEDS.setdefault(path, FeedStore(path)).snapshot()

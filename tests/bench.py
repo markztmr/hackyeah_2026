@@ -8,9 +8,6 @@ the real gateway in process, on a temp copy of policy.yaml, a freshly seeded dat
 and temp audit and budget files. Median and p95 (nearest rank, as on the dashboard) per
 pipeline step come from the audit records, plus total latency per prompt kind. The table
 is printed and saved to bench_results.md (``--out``).
-
-Until ``inspect_inbound`` (Person 2) lands, step 3 is assembled from its real parts, as
-in ``scripts/dev_serve.py``; the output says so.
 """
 from __future__ import annotations
 
@@ -154,20 +151,6 @@ def patched(obj: Any, name: str, value: Any) -> Iterator[None]:
         setattr(obj, name, old)
 
 
-def _inbound_missing(policy_path: Path) -> bool:
-    """True while gateway.inbound.masker.inspect_inbound still raises NotImplementedError."""
-    from gateway.inbound.masker import inspect_inbound
-    from gateway.models import ChatRequest, IssuedCache, Principal
-    from gateway.policy.loader import load_policy
-
-    try:
-        inspect_inbound(ChatRequest(model="x", messages=[{"role": "user", "content": "hi"}]),
-                        Principal("anna", "intern", "sales", "deny"), load_policy(policy_path), IssuedCache())
-    except NotImplementedError:
-        return True
-    return False
-
-
 def ollama_up() -> bool:
     try:
         with socket.create_connection(OLLAMA_ADDR, timeout=0.5):
@@ -193,7 +176,6 @@ class Result:
 def run(live: bool = False) -> Result:
     from fastapi.testclient import TestClient
 
-    from gateway import pipeline
     from gateway.llm import client as llm
     from gateway.llm import digests
     from gateway.llm.client import StubModel, text
@@ -209,7 +191,7 @@ def run(live: bool = False) -> Result:
         def installed(pol: Any) -> dict[str, str]:  # stub: every pinned model is installed as pinned
             return {m["name"]: digests.normalize_digest(m.get("digest")) for m in setting(pol, "models.allowed")}
 
-        with _patches(live, pipeline, llm, digests, stubs, installed, env, notes):
+        with _patches(live, llm, digests, stubs, installed):
             from gateway.main import app
 
             with TestClient(app) as client:
@@ -224,8 +206,7 @@ def run(live: bool = False) -> Result:
 
 
 @contextmanager
-def _patches(live: bool, pipeline: Any, llm: Any, digests: Any, stubs: dict[str, Any], installed: Any,
-             env: Env, notes: list[str]) -> Iterator[None]:
+def _patches(live: bool, llm: Any, digests: Any, stubs: dict[str, Any], installed: Any) -> Iterator[None]:
     from contextlib import ExitStack
 
     with ExitStack() as stack:
@@ -233,12 +214,6 @@ def _patches(live: bool, pipeline: Any, llm: Any, digests: Any, stubs: dict[str,
             stack.enter_context(patched(llm, "get_client", lambda purpose, policy: stubs[purpose]))
             stack.enter_context(patched(digests, "installed_digests", installed))
         digests._STORE.clear()
-        if _inbound_missing(env.policy):
-            from scripts import dev_serve
-
-            stack.enter_context(patched(pipeline, "inspect_inbound", dev_serve.inspect_inbound))
-            notes.append("Step 3 (inbound) is assembled from its real parts (scripts/dev_serve.py) "
-                         "until inspect_inbound lands.")
         try:
             yield
         finally:

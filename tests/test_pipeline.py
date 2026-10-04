@@ -232,8 +232,17 @@ def test_crash_inside_a_step_still_writes_one_audit_record(
     assert SECRET not in str(record)
 
 
-def test_crash_in_the_real_pipeline_today_is_a_safe_error(client: TestClient, audit_records) -> None:
-    """Without fakes, unbuilt steps raise NotImplementedError: the request fails closed."""
+def test_plain_question_is_answered_by_the_real_pipeline(client: TestClient, stub: StubModel, audit_records) -> None:
+    """No fakes: every step is the real module. Regression: step 3 used to raise, so every chat got HTTP 500."""
+    stub.add(text("Why did the gateway cross the road? To mask the other side."))
+    r = _ask(client, "Tell me a joke")
+    assert r.status_code == 200 and r.headers["x-acl-verdict"] == "allow"
+    assert r.json()["choices"][0]["message"]["content"].startswith("Why did the gateway")
+    assert len(audit_records()) == 1
+
+
+def test_model_failure_in_the_real_pipeline_is_a_safe_error(client: TestClient, audit_records) -> None:
+    """No fakes and no scripted reply: the model call fails and the request fails closed."""
     r = _ask(client, "Hi")
     assert r.status_code == 500
     assert len(audit_records()) == 1

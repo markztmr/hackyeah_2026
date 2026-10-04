@@ -1,8 +1,7 @@
 """Hidden values never reach a model, in this request or later ones. Spec section 4 example D, I7, I9.
 
 Owner: Person 4. Two turns through the HTTP endpoint with the same pipeline as
-``test_e2e.py``: everything real except the models (scripted stubs) and step 3, which is
-assembled from its real parts (``assembled_inbound``) until ``inspect_inbound`` lands.
+``test_e2e.py``: everything real except the models (scripted stubs).
 """
 from __future__ import annotations
 
@@ -14,9 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gateway.llm.client import StubModel, text, tool_call
-from tests.test_e2e import (  # noqa: F401 - assembled_inbound is an autouse fixture
-    ANNA_SALARY, ANSWER_A, CEO_SALARY, QUESTION_A, answer, ask, assembled_inbound, example_a, forms,
-)
+from tests.test_e2e import ANNA_SALARY, ANSWER_A, CEO_SALARY, QUESTION_A, answer, ask, example_a, forms
 
 FIRST_ANSWER = "Your salary is 6200 PLN."
 

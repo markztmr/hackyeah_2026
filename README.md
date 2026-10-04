@@ -32,18 +32,18 @@ Identity is derived from the API key only. Nothing in a prompt, tool result or m
 
 Every request passes through the same ten steps:
 
-| Phase | Step | Control |
-| --- | --- | --- |
-| Inbound | 1 | Authenticate the API key, snapshot the policy version |
-| | 2 | Model allowlist with digest pinning, budget pre-check |
-| | 3 | Detect secrets and PII, re-mask history, scan client tool definitions |
-| | 4 | Injection phrases, signature feed, then the judge model |
-| Model and tool loop | 5 | Call the model with the built-in `query_data` tool |
-| | 6 | Validate, authorize and execute SQL; return a placeholder (bounded loop) |
-| Outbound | 7 | Authorize client tool calls: role, argument rules, egress |
-| | 8 | Fill placeholders in a single literal pass |
-| | 9 | Output filter on the answer and tool arguments |
-| | 10 | Record token usage, write exactly one audit record |
+| Phase               | Step | Control                                                                  |
+| ------------------- | ---- | ------------------------------------------------------------------------ |
+| Inbound             | 1    | Authenticate the API key, snapshot the policy version                    |
+|                     | 2    | Model allowlist with digest pinning, budget pre-check                    |
+|                     | 3    | Detect secrets and PII, re-mask history, scan client tool definitions    |
+|                     | 4    | Injection phrases, signature feed, then the judge model                  |
+| Model and tool loop | 5    | Call the model with the built-in`query_data` tool                      |
+|                     | 6    | Validate, authorize and execute SQL; return a placeholder (bounded loop) |
+| Outbound            | 7    | Authorize client tool calls: role, argument rules, egress                |
+|                     | 8    | Fill placeholders in a single literal pass                               |
+|                     | 9    | Output filter on the answer and tool arguments                           |
+|                     | 10   | Record token usage, write exactly one audit record                       |
 
 Deterministic checks run first. A request blocked by them never reaches a model.
 
@@ -163,17 +163,17 @@ streamlit run dashboard/app.py --server.port 8501
 streamlit run demo_agent/app.py --server.port 8502
 ```
 
-| Service | Address |
-| --- | --- |
+| Service     | Address                  |
+| ----------- | ------------------------ |
 | Gateway API | http://localhost:8000/v1 |
-| Dashboard | http://localhost:8501 |
-| Demo agent | http://localhost:8502 |
+| Dashboard   | http://localhost:8501    |
+| Demo agent  | http://localhost:8502    |
 
-| User | Role | AI data policy | API key |
-| --- | --- | --- | --- |
-| anna | intern | deny | `demo-anna` |
-| marek | sales lead | allow, department scope | `demo-marek` |
-| piotr | HR manager | allow, up to `internal` | `demo-piotr` |
+| User  | Role       | AI data policy           | API key        |
+| ----- | ---------- | ------------------------ | -------------- |
+| anna  | intern     | deny                     | `demo-anna`  |
+| marek | sales lead | allow, department scope  | `demo-marek` |
+| piotr | HR manager | allow, up to`internal` | `demo-piotr` |
 
 Other commands:
 
@@ -186,27 +186,27 @@ python -m gateway.cli.fetch_feed <url>    # update the signature feed
 
 ## Project structure
 
-| Path | Contents |
-| --- | --- |
-| `gateway/main.py`, `pipeline.py` | HTTP endpoints and the ten-step pipeline |
-| `gateway/auth.py`, `budget.py` | API key authentication, model allowlist, budgets |
-| `gateway/audit.py`, `telemetry.py` | Audit log, CSV export, dashboard metrics, per-step latency |
-| `gateway/inbound/` | Masking, history re-masking, injection phrases, signatures, judge |
-| `gateway/binding/` | SQL validator, authorizer, read-only executor, disclosure rule |
-| `gateway/agency/` | Tool loop and client tool authorization |
-| `gateway/outbound/` | Placeholder fill, output filter, protected-value index |
-| `gateway/policy/` | Policy loading, validation, profiles, live reload |
-| `gateway/llm/` | OpenAI-compatible model client, digest pinning, test stub |
-| `gateway/cli/` | Model file scanner, signature feed updater |
-| `dashboard/` | Streamlit dashboard |
-| `demo_agent/` | A plain chat agent with two client tools |
-| `db/` | Demo database seed |
-| `tests/` | Test suite and latency benchmark |
-| `policy.yaml` | Roles, tools, data labels, budgets, models |
-| `signatures.json` | Attack signature feed |
-| `docs/spec/` | Design specification |
+| Path                                   | Contents                                                          |
+| -------------------------------------- | ----------------------------------------------------------------- |
+| `gateway/main.py`, `pipeline.py`   | HTTP endpoints and the ten-step pipeline                          |
+| `gateway/auth.py`, `budget.py`     | API key authentication, model allowlist, budgets                  |
+| `gateway/audit.py`, `telemetry.py` | Audit log, CSV export, dashboard metrics, per-step latency        |
+| `gateway/inbound/`                   | Masking, history re-masking, injection phrases, signatures, judge |
+| `gateway/binding/`                   | SQL validator, authorizer, read-only executor, disclosure rule    |
+| `gateway/agency/`                    | Tool loop and client tool authorization                           |
+| `gateway/outbound/`                  | Placeholder fill, output filter, protected-value index            |
+| `gateway/policy/`                    | Policy loading, validation, profiles, live reload                 |
+| `gateway/llm/`                       | OpenAI-compatible model client, digest pinning, test stub         |
+| `gateway/cli/`                       | Model file scanner, signature feed updater                        |
+| `dashboard/`                         | Streamlit dashboard                                               |
+| `demo_agent/`                        | A plain chat agent with two client tools                          |
+| `db/`                                | Demo database seed                                                |
+| `tests/`                             | Test suite and latency benchmark                                  |
+| `policy.yaml`                        | Roles, tools, data labels, budgets, models                        |
+| `signatures.json`                    | Attack signature feed                                             |
+| `docs/spec/`                         | Design specification                                              |
 
 ## Documentation
 
 - [Design specification](docs/spec/README.md)
-- [Presentation](AI%20Control%20Layer%20Presentation.pdf)
+- [Presentation](<AI%20Control%20Layer%20Presentation.pdf>)

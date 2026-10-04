@@ -24,12 +24,12 @@ import math
 import re
 import threading
 from collections.abc import Iterator, Mapping
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from gateway.budget import limits
-from gateway.models import AuditRecord, Binding, Decision, Policy, Principal, Vault
+from gateway.models import AuditRecord, Binding, Decision, Policy, Principal, SignatureFeed, Vault
 from gateway.policy.loader import REPO_ROOT, setting
 
 log = logging.getLogger(__name__)
@@ -229,6 +229,11 @@ def export_csv(records: list[dict[str, Any]]) -> str:
 
 LAST_REQUESTS = 50
 _VERDICTS = ("allow", "redact", "block", "log")
+BINDING_STATUSES = ("resolved", "denied", "rejected", "empty", "error")
+TOOL_VERDICTS = ("allow", "deny")
+WINDOW_MINUTES = 60
+NO_TABLE = "(none)"  # a binding rejected before its tables were known
+_ID_SPLIT = re.compile(r"[\s,;()]+")
 
 
 def _utcnow() -> datetime:
@@ -297,18 +302,137 @@ def _last_requests(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
-def audit_metrics(records: list[dict[str, Any]], policy: Policy, *, now: datetime | None = None) -> dict[str, Any]:
+def _time(rec: dict[str, Any]) -> datetime | None:
+    try:
+        return datetime.fromisoformat(rec["timestamp"]).astimezone(timezone.utc)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _blocks_by_signature_category(today: list[dict[str, Any]], feed: SignatureFeed | None) -> dict[str, int]:
+    """Blocked requests per category of the signatures named in their blocking ``signatures``
+    decisions (once per request and category). IDs are matched as whole tokens against the
+    current feed; an ID no longer in it counts as ``unknown``."""
+    categories = {s.id: s.category for s in (feed.signatures if feed is not None else ())}
+    counts: dict[str, int] = {}
+    for rec in today:
+        if rec.get("verdict") != "block":
+            continue
+        found: set[str] = set()
+        for d in rec.get("decisions") or []:
+            if d.get("verdict") != "block" or d.get("control") != "signatures":
+                continue
+            ids = [t for t in _ID_SPLIT.split(str(d.get("reason") or "")) if t in categories]
+            found |= {categories[i] for i in ids} or {"unknown"}
+        for category in found:
+            counts[category] = counts.get(category, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def _blocks_over_time(records: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
+    """Requests and blocks per minute for the last hour, oldest first, empty minutes included."""
+    end = now.replace(second=0, microsecond=0)
+    start = end - timedelta(minutes=WINDOW_MINUTES - 1)
+    buckets: list[dict[str, Any]] = [
+        {"minute": (start + timedelta(minutes=i)).isoformat(), "requests": 0, "blocks": 0}
+        for i in range(WINDOW_MINUTES)]
+    for rec in records:
+        ts = _time(rec)
+        if ts is None:
+            continue
+        i = int((ts.replace(second=0, microsecond=0) - start).total_seconds() // 60)
+        if 0 <= i < WINDOW_MINUTES:
+            buckets[i]["requests"] += 1
+            buckets[i]["blocks"] += int(rec.get("verdict") == "block")
+    return buckets
+
+
+def _blocks_by_user(today: list[dict[str, Any]]) -> dict[str, int]:
+    """Blocked requests per authenticated user, most first (401s have no user and are not listed)."""
+    counts: dict[str, int] = {}
+    for rec in today:
+        if rec.get("verdict") == "block" and rec.get("user_id"):
+            counts[rec["user_id"]] = counts.get(rec["user_id"], 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def _binding_outcomes(today: list[dict[str, Any]]) -> dict[str, dict[str, dict[str, int]]]:
+    """role -> table -> outcome counts. A binding that read several tables counts once for each."""
+    out: dict[str, dict[str, dict[str, int]]] = {}
+    for rec in today:
+        role = rec.get("role") or "(unauthenticated)"
+        for b in rec.get("bindings") or []:
+            status = b.get("status")
+            if status not in BINDING_STATUSES:
+                continue
+            for table in sorted({str(t).lower() for t in b.get("tables") or []}) or [NO_TABLE]:
+                cell = out.setdefault(role, {}).setdefault(table, dict.fromkeys(BINDING_STATUSES, 0))
+                cell[status] += 1
+    return {r: dict(sorted(t.items())) for r, t in sorted(out.items())}
+
+
+def _tool_decisions_by_tool(today: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """tool -> allow / deny counts of client tool calls."""
+    out: dict[str, dict[str, int]] = {}
+    for rec in today:
+        for t in rec.get("tool_decisions") or []:
+            if t.get("verdict") in TOOL_VERDICTS:
+                cell = out.setdefault(str(t.get("tool")), dict.fromkeys(TOOL_VERDICTS, 0))
+                cell[t["verdict"]] += 1
+    return dict(sorted(out.items()))
+
+
+def _number(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def _percentile(values: list[float], q: float) -> float:
+    """Nearest-rank percentile of a non-empty list."""
+    ordered = sorted(values)
+    return ordered[max(0, math.ceil(q * len(ordered)) - 1)]
+
+
+def _latency_by_step(today: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+    """Median and p95 (nearest rank) in ms per pipeline step, in pipeline order, then ``total``."""
+    samples: dict[str, list[float]] = {}
+    totals: list[float] = []
+    for rec in today:
+        for step, ms in (rec.get("step_latency_ms") or {}).items():
+            if _number(ms) is not None:
+                samples.setdefault(str(step), []).append(float(ms))
+        total = _number(rec.get("total_latency_ms"))
+        if total is not None and rec.get("step_latency_ms"):
+            totals.append(total)
+    if totals:
+        samples.pop("total", None)
+        samples["total"] = totals
+    return {step: {"median_ms": round(_percentile(v, 0.5), 3), "p95_ms": round(_percentile(v, 0.95), 3),
+                   "count": len(v)} for step, v in samples.items()}
+
+
+def audit_metrics(records: list[dict[str, Any]], policy: Policy, *, now: datetime | None = None,
+                  feed: SignatureFeed | None = None) -> dict[str, Any]:
     """Dashboard sections for GET /metrics, from audit records in file order. Spec section 12.
 
-    A dict of independent sections; new sections are added as new keys. Counts and usage
-    cover today (UTC), the budget day; ``last_requests`` is the newest 50 whatever the day.
-    Everything comes from audit records, which hold no values (I8).
+    A dict of independent sections; new sections are added as new keys. Counts, usage and
+    latency cover today (UTC), the budget day; ``last_requests`` is the newest 50 whatever
+    the day; ``blocks_over_time`` is the last 60 minutes. ``feed`` maps signature IDs to
+    categories. Everything comes from audit records, which hold no values (I8).
     """
-    day = (now or _utcnow()).astimezone(timezone.utc).date().isoformat()
+    now = (now or _utcnow()).astimezone(timezone.utc)
+    day = now.date().isoformat()
     today = [r for r in records if _is_day(r, day)]
     return {
         "requests_by_verdict": _requests_by_verdict(today),
         "blocks_by_control": _blocks_by_control(today),
         "tokens_and_cost_by_user": _tokens_and_cost_by_user(today, policy, day),
         "last_requests": _last_requests(records),
+        "blocks_by_signature_category": _blocks_by_signature_category(today, feed),
+        "blocks_over_time": _blocks_over_time(records, now),
+        "blocks_by_user": _blocks_by_user(today),
+        "binding_outcomes_by_role_and_table": _binding_outcomes(today),
+        "tool_decisions_by_tool": _tool_decisions_by_tool(today),
+        "latency_by_step": _latency_by_step(today),
     }

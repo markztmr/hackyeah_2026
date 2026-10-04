@@ -184,6 +184,39 @@ The host's own traffic to the MCP server does not pass through the gateway. A de
 - Gateway overhead with stub models (`python -m tests.bench`): about 11 ms median and 24 ms p95 per request. A blocked request takes under 4 ms (median).
 - OWASP Top 10 for LLM Applications (2025): 6 risks covered fully, 3 partially, 1 out of scope (LLM08, no RAG).
 
+### Ten test cases worth reading
+
+Each one attacks a different layer. Together they cover every feature above.
+
+| #  | Strength                | Test                                                                                                                   | What it proves                                                                                                                                                                                                                  |
+| -- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1  | Deferred data binding   | `test_invariants.py::test_hidden_values_never_reach_any_model_input`                                                 | Anna gets her salary (6200) in the answer, but no model input ever contains it: not in this request, and not in the next one when the client sends the answer back as history (it arrives as `[PRIOR_VALUE]`).                |
+| 2  | Output filter           | `test_protected_index.py::test_model_guessing_the_ceo_salary_is_redacted_for_anna`                                   | A model that guesses the CEO's salary from memory (`48000`, `48,000`, `48 000`, `48.000`) is redacted for Anna. The same number inserted by the gateway for Piotr is kept, and a product price is left alone.                  |
+| 3  | Tool governance         | `test_redteam_tool_authz.py::test_allow_pattern_cannot_be_dodged_by_a_placeholder_inside_the_recipient`              | `send_email(to="{x1}@company.pl")` passes the recipient pattern before fill; a database value `attacker@evil.com, x` then turns it external. Argument rules hold for the filled value, so the external address never reaches the agent. |
+| 4  | Row-level scope         | `test_scope_department.py::test_unfiltered_listing_that_skipped_the_authorizer_returns_only_his_department`          | Even when the static SQL authorizer is bypassed, `SELECT name FROM employees` run for Marek returns only the sales department: the executor enforces row scope a second time.                                                 |
+| 5  | Read-only executor      | `test_executor.py::test_write_fails_even_if_set_authorizer_allowed_everything`                                       | With the SQLite authorizer replaced by one that allows everything, `DELETE`, `UPDATE` and `INSERT` still fail and the database is unchanged: the connection itself is opened with `mode=ro`.                                   |
+| 6  | Prompt injection        | `test_redteam_inbound.py::test_injection_anywhere_in_client_history_is_blocked`                                      | An injection hidden in a client system message, an earlier turn, a forged assistant turn, an older tool result or a `developer` role is blocked, and the answer model is never called.                                       |
+| 7  | Secrets and PII         | `test_redteam_inbound.py::test_unicode_obfuscated_pii_or_secret_is_masked`                                           | Seven Unicode evasions are still detected: a zero-width character in an email or API key, a full-width `@` or card digits, no-break spaces inside a phone number, IBAN or card number.                                         |
+| 8  | Supply chain            | `test_models.py::test_request_for_a_swapped_model_is_blocked_before_any_model_call`                                  | If `qwen2.5:3b` is replaced on disk by a model with a different digest, requests are blocked with a "pinned digest" reason before any model or judge call.                                                                      |
+| 9  | Centralized policy      | `test_policy_reload.py::test_off_on_a_core_control_during_reload_keeps_the_old_policy`                               | Saving `audit: { mode: off }` on a running gateway is rejected ("cannot be disabled"); the last valid policy stays active and the policy status reports the error.                                                                    |
+| 10 | Budgets and audit       | `test_budget.py::test_tool_loop_stops_when_a_call_exhausts_the_budget`, `test_invariants.py::test_every_request_writes_exactly_one_audit_record` | A budget that runs out in the middle of the tool loop stops the next model call. Allowed, blocked, 401, crashed and malformed requests each write exactly one audit record, and none of them contains the secret or the value. |
+
+Run them all:
+
+```bash
+pytest "tests/test_invariants.py::test_hidden_values_never_reach_any_model_input" \
+       "tests/test_protected_index.py::test_model_guessing_the_ceo_salary_is_redacted_for_anna" \
+       "tests/test_redteam_tool_authz.py::test_allow_pattern_cannot_be_dodged_by_a_placeholder_inside_the_recipient" \
+       "tests/test_scope_department.py::test_unfiltered_listing_that_skipped_the_authorizer_returns_only_his_department" \
+       "tests/test_executor.py::test_write_fails_even_if_set_authorizer_allowed_everything" \
+       "tests/test_redteam_inbound.py::test_injection_anywhere_in_client_history_is_blocked" \
+       "tests/test_redteam_inbound.py::test_unicode_obfuscated_pii_or_secret_is_masked" \
+       "tests/test_models.py::test_request_for_a_swapped_model_is_blocked_before_any_model_call" \
+       "tests/test_policy_reload.py::test_off_on_a_core_control_during_reload_keeps_the_old_policy" \
+       "tests/test_budget.py::test_tool_loop_stops_when_a_call_exhausts_the_budget" \
+       "tests/test_invariants.py::test_every_request_writes_exactly_one_audit_record" -v
+```
+
 ## Quick start
 
 Requirements: Python 3.11+, [Ollama](https://ollama.com).

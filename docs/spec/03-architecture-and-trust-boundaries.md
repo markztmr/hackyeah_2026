@@ -3,9 +3,9 @@
 The gateway is the only trusted component. It alone holds database credentials, the vault
 and the issued-value cache. Clients and models are untrusted, local or external.
 
-![Only the gateway touches data; models and clients stay untrusted](img/architecture.png)
+![Only the gateway touches data; models and clients stay untrusted](img/architecture.svg)
 
-*architecture · trusted gateway with four stages, untrusted client and models, gateway-only database*
+*architecture · trusted gateway with three phases, untrusted client and models, gateway-only storage*
 
 The highlighted tool loop is where deferred binding happens: the model proposes SQL,
 the gateway runs it and decides whether the model sees the value or only a placeholder.
@@ -23,15 +23,18 @@ request, where they are scanned like any other input.
 | Client (demo agent or any agent) | Untrusted | Sends messages and its own tools with the user's API key; executes its own tools |
 | Gateway | Trusted | Runs the whole pipeline; only holder of DB credentials, vault and issued-value cache |
 | Answer model | Untrusted | Writes answers and proposes tool calls, including `query_data` |
-| Judge model | Untrusted, local only | Scores input risk; output parsed as a number, never followed |
+| Judge model | Untrusted, local by configuration | Scores input risk; output parsed as a number, never followed. It receives sanitized text only. `policy.yaml` points it at local Ollama; the validator does not force this |
 | Database | Trusted, gateway only | Demo data (`products`, `employees`, `salaries`), opened read-only |
 | `policy.yaml` | Trusted config | Controls, roles, tools, labels, budgets, models |
 | `signatures.json` | Trusted feed | Versioned attack patterns, swappable at runtime |
-| `state.db` | Trusted, gateway only | Budget counters and audit index; survives restarts |
-| Dashboard | Internal | Reads metrics and audit log; shows the effective policy |
+| `state.db` | Trusted, gateway only | Token and cost counters, request-rate window; survives restarts. Opened only by `budget.py` |
+| `logs/audit.jsonl` | Trusted, gateway only | One audit record per request; source of `/metrics` and the CSV export |
+| Vault, issued-value cache | Trusted, gateway memory | Vault per request, erased at the end; issued-value cache per user with a TTL |
+| Dashboard | Internal | Reads only the gateway's HTTP endpoints (`/metrics`, `/policy/effective`, `/health`, `/audit/export`); never opens a database or the audit file |
 
-**Deployment at the hackathon.** One laptop: Ollama on `localhost:11434`, gateway on
-`localhost:8000`, dashboard on `localhost:8501`, demo agent as a local app. The
+**Deployment at the hackathon.** One laptop: Ollama on `127.0.0.1:11434`, gateway on
+`localhost:8000`, dashboard on `localhost:8501`, demo agent as a second Streamlit app
+(`localhost:8502` in the README). The
 gateway calls Ollama through its OpenAI-compatible endpoint, so local and external
 models share one adapter.
 

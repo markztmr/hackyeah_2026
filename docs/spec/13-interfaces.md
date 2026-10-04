@@ -8,11 +8,13 @@ can work in parallel.
 
 ```text
 HackYeah2026/
-├── CLAUDE.md                  # rules for Claude Code sessions
-├── README.md                  # setup, run, test in a few commands
+├── README.md                  # overview, setup, run, test
+├── AI Control Layer Presentation.pdf
 ├── pyproject.toml
 ├── policy.yaml                # single source of truth
 ├── signatures.json            # external attack signature feed
+├── .streamlit/config.toml     # shared theme for the dashboard and the demo agent
+├── docs/                      # this specification (Markdown + original PDF)
 ├── gateway/
 │   ├── main.py                # FastAPI app and endpoints only
 │   ├── pipeline.py            # the 10 steps, in order
@@ -32,6 +34,7 @@ HackYeah2026/
 │   │   └── judge.py           # semantic check via judge model
 │   ├── llm/
 │   │   ├── client.py          # OpenAI-compatible adapter + stub
+│   │   ├── digests.py         # model digest pinning against Ollama /api/tags
 │   │   └── prompts.py         # system message, few-shot, query_data schema
 │   ├── agency/
 │   │   ├── loop.py            # tool loop, mixed-turn rule, limits
@@ -51,10 +54,14 @@ HackYeah2026/
 ├── db/
 │   ├── schema.sql             # products, employees, salaries
 │   └── seed.py                # fake demo data
-├── dashboard/app.py           # Streamlit, auto-refresh
-├── demo_agent/app.py          # chat UI using the openai SDK + 2 client tools
-└── tests/                     # section 14
+├── dashboard/app.py           # Streamlit, auto-refresh, reads the gateway's HTTP API only
+├── demo_agent/app.py          # Streamlit chat UI using the openai SDK + 2 client tools
+├── scripts/model_bakeoff.py   # hour-1 model test (section 15)
+└── tests/                     # section 14; tests/bench.py is the latency benchmark
 ```
+
+Runtime files, not in the repository: `demo.db` (created by `db/seed.py`), `state.db`
+and `logs/audit.jsonl` (created by the gateway).
 
 The demo agent uses the stock `openai` Python SDK with
 `base_url=http://localhost:8000/v1`. That one line is the integration story for the

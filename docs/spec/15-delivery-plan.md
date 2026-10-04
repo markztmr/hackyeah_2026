@@ -8,59 +8,63 @@ October and submissions close at 11:00 PM on 4 October. Another source reports 1
 AM. We treat the earlier time as binding and confirm with the organizers on Discord at H0.
 The 50% phase-1 threshold means breadth across all five criteria beats depth in one.
 
+**Status (4 October 2026).** Ticked items are verified in the repository. Unticked items
+are either not built (scope rewrite, separate aggregate permissions, buffered SSE,
+hash-chained audit log) or happen outside the code and are not tracked here.
+
 ## Hour 1: model test
 
 Run 10 fixed prompts against `llama3.2` and `qwen2.5:3b` through Ollama's OpenAI-compatible endpoint with the `query_data` tool. Measure for each model: share of data
 questions that call `query_data`, share of SQL that passes the validator, share of answers
 that use the placeholder, and median latency. The best model becomes `models.answer`.
 
-- [x] Hour-1 model test, result recorded in README
-- [ ] Repo skeleton, stub model, `pytest` running green on an empty suite
+- [x] Hour-1 model test (`scripts/model_bakeoff.py`), result recorded in section 11
+- [x] Repo skeleton, stub model, `pytest` running green on an empty suite
 - [ ] Deadline confirmed with organizers
 
 ## Tier 1: MVP (H1 to H10)
 
-- [ ] Auth and policy loader with reload, version hash and validation
+- [x] Auth and policy loader with reload, version hash and validation
 - [x] Masker (secrets, PII) and injection phrase list
-- [ ] Signature feed matching on input, tool results and model output
-- [ ] Proxy pass-through for plain chat
-- [ ] Client tool authorization with argument rules
-- [ ] `query_data` tool loop on the stub model
-- [ ] SQL validator, authorizer (tables, columns, scope `self` and `all`), read-only executor
+- [x] Signature feed matching on input, tool results and model output
+- [x] Proxy pass-through for plain chat
+- [x] Client tool authorization with argument rules
+- [x] `query_data` tool loop on the stub model
+- [x] SQL validator, authorizer (tables, columns, scope `self` and `all`), read-only executor
   with `set_authorizer`
-- [ ] Placeholder-only disclosure and single-pass fill
-- [ ] Deterministic output filter (secrets, PII, unbound placeholders)
-- [ ] Basic budget and audit log
-- [ ] Tests for every item above
+- [x] Placeholder-only disclosure and single-pass fill
+- [x] Deterministic output filter (secrets, PII, unbound placeholders)
+- [x] Basic budget and audit log
+- [x] Tests for every item above
 
 ## Tier 2: complete (H10 to H17)
 
-- [ ] Real Ollama end to end
+- [x] Real Ollama end to end
 - [x] Judge model with hardened prompt and `on_failure`
 - [x] History re-masking and issued-value cache
 - [x] Protected-value index in the output filter
 - [x] Dashboard with the panels in section 12, auto-refresh, CSV export
 - [x] Model allowlist with digest pinning; model file scanner
 - [x] Disclosure with labels for `allow` users; scope `department`
-- [ ] Profiles and `GET /policy/effective`
+- [x] Profiles and `GET /policy/effective`
 
 ## Tier 3: stretch
 
-- [ ] Benchmark script and latency slide
+- [x] Benchmark script and latency slide
 - [ ] Scope enforcement by rewrite
 - [ ] Separate aggregate permissions
 - [x] `fetch_feed` command
 - [ ] Buffered SSE for `stream: true`
 - [ ] Hash-chained audit log
-- [ ] `all_denied_message`
+- [x] `all_denied_message`
 
 ## Freeze (deadline minus 3 hours)
 
-- [ ] README with one-command start and test command
+- [x] README with one-command start and test command
 - [ ] Demo script for the four worked examples in section 4
-- [ ] Full test run, output captured for the slides
+- [x] Full test run, output captured for the slides
 - [ ] Recorded demo video as a backup
-- [ ] Slides, at most 10, exported to PDF
+- [x] Slides, at most 10, exported to PDF
 - [ ] HackTribe submission: title, team name, members (1 to 6), description, slides PDF,
   repository link
 

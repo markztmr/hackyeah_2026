@@ -22,7 +22,7 @@ suite is never a last-hour task.
 | `test_injection.py` | Phrase list | Normal question passes | English and Polish injection blocked |
 | `test_signatures.py` | Feed on every surface | Normal code question passes | Pickle payload in input, in tool result, in model output blocked; feed reload picks up a new rule |
 | `test_tool_definitions.py` | Tool poisoning | Clean tool passes | Instruction in tool description blocked; tool named `query_data` blocked |
-| `test_judge.py` (live) | Semantic check | Benign prompt scores low | Role-play injection blocked; judge down follows `on_failure` |
+| `test_judge.py` (stub, 2 live) | Semantic check | Benign prompt scores low | Role-play injection blocked; judge down follows `on_failure` |
 | `test_sql_validator.py` | Read-only, functions, params | Single SELECT passes | DELETE, stacked query, ATTACH, `load_extension`, unknown parameter rejected |
 | `test_authorizer.py` | Tables, columns, scope | Intern reads own salary | CEO salary, `OR 1=1`, join into salaries, `AVG(salary)`, literal identity: denied |
 | `test_executor.py` | Runtime barriers (I5) | Allowed read returns rows | Unpermitted column denied by `set_authorizer`; slow query times out; row limit truncates |
@@ -37,8 +37,21 @@ suite is never a last-hour task.
 | `test_models.py` | Model allowlist, digest | Allowed model used | Unlisted model blocked; digest mismatch blocked |
 | `test_scan_model.py` | Model file scanner | Safe pickle fixture passes | `os.system` pickle fixture fails |
 | `test_audit.py` | Logging (I17) | One record per request, including blocked | No raw secret or value in the log file |
-| `test_single_door.py` | I1 | Only `executor.py` opens a DB connection | Any other module importing `sqlite3.connect` fails the test |
+| `test_invariants.py` | One test per invariant I1-I19 | Only `executor.py` opens `demo.db`; approved SQL runs unchanged | Any other module calling `sqlite3.connect` (besides `budget.py` for `state.db`) fails the test |
 | `test_e2e.py` | Full pipeline | Piotr gets headcount and salary | Anna gets `[UNAVAILABLE]` for the CEO; blocked `send_email` reported |
+
+Further files cover the rest of the code:
+
+| Area | Files |
+| --- | --- |
+| Red team | `test_redteam_inbound.py`, `test_redteam_authorizer.py`, `test_redteam_tool_authz.py` |
+| Pipeline and endpoints | `test_pipeline.py`, `test_endpoints.py`, `test_inbound.py`, `test_smoke.py` |
+| Data access | `test_scope_department.py`, `test_protected_index.py`, `test_vault.py`, `test_seed.py` |
+| Models | `test_llm_client.py`, `test_external_model.py`, `test_prompts.py`, `test_stub_model.py`, `test_llm_live.py` (live) |
+| Feed | `test_fetch_feed.py` |
+| Reporting | `test_metrics.py`, `test_dashboard.py`, `test_demo_agent.py`, `test_bench.py` |
+
+Current result: `1408 passed, 5 skipped, 8 deselected` (the 8 deselected are the live tests).
 
 **Telemetry check.** `python -m tests.bench` sends a fixed prompt set and reports median
 and p95 latency per pipeline step, for the slides and the performance criterion.

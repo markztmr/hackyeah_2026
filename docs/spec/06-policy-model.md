@@ -194,6 +194,11 @@ dashboard:
   refresh_seconds: 2
 ```
 
+**Reserved values.** The validator accepts `sql_controls.scope_enforcement: rewrite`,
+`sql_controls.aggregates: separate` and `audit.hash_chain: true`, but these stretch
+features are not built: the gateway always rejects out-of-scope queries, treats
+aggregates as column access and writes a plain JSONL log.
+
 The three demo users cover every path: Anna sees only hidden values and self scope;
 Marek demonstrates department scope and disclosure of `internal` values; Piotr
 demonstrates mixed disclosure (headcounts to the model, salaries filled by the gateway)

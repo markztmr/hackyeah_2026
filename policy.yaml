@@ -11,7 +11,7 @@ models:
   answer:
     provider: ollama            # ollama | openai_compatible
     base_url: http://localhost:11434/v1
-    name: "qwen2.5:3b"          # final choice from the hour-1 test (README "Model choice")
+    name: "qwen2.5:3b"          # final choice from the hour-1 test (spec section 11)
     trust: local                # local | external
     max_tokens: 512
     timeout_s: 30                # seconds per model call

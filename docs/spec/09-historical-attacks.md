@@ -10,7 +10,7 @@ v2 covers each with a control and feeds the patterns from an external, versioned
 | Malicious or swapped models | Typosquatted or poisoned repositories on public hubs; a model silently replaced | `models.allowed` with digest pinning, checked at startup, on reload and by `/health` against Ollama `/api/tags`. Repository blocklist in the feed. |
 | Code execution through agents | Model output or tool arguments carrying shell commands, `eval`, `__import__`, `pickle.loads` into a code tool | Signatures applied to model output and client tool arguments, not only prompts. High-severity patterns (pipe-to-shell, reverse shell) block; others log. |
 | Remote-code loading | `trust_remote_code=True`, model URLs from untrusted hosts | URL and option patterns in the feed, applied to every text surface. |
-| Exposed model server | Model APIs reachable from the network without authentication | Deployment check: README requires `OLLAMA_HOST=127.0.0.1`; the gateway is the only network-facing service. |
+| Exposed model server | Model APIs reachable from the network without authentication | Deployment requirement: the README requires `OLLAMA_HOST=127.0.0.1`; the gateway is the only network-facing service. Not checked by the gateway at runtime. |
 | Indirect injection | Instructions hidden in web pages, emails or database rows returned to the model | Tool results and disclosed values are scanned like user input (sections 4 and 5). |
 
 ## Signature feed format

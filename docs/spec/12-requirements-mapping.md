@@ -45,6 +45,7 @@ Security reporting is 20%, so the dashboard is specified, not improvised:
 
 - **Posture:** policy version and profile, every control with its mode and source (explicit,
   profile, default, off), signature feed version, model digest status.
+- **Totals:** requests and blocks today (UTC).
 - **Live feed:** last 50 requests with user, verdict, blocking control and reason.
 - **Threats:** blocks by control and by signature category over time; top users by blocks.
 - **Data access:** binding outcomes (resolved, denied, rejected, empty, error) by role and

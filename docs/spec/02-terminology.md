@@ -18,7 +18,7 @@ in v2 are marked (v2).
 | Client tool (v2) | A tool defined by the client in the request's `tools` field. The gateway never executes it; it only authorizes calls to it. |
 | Built-in tool (v2) | A tool the gateway adds to the model's tool list and executes itself. In v2 there is one: `query_data`. |
 | `query_data` (v2) | Built-in tool with arguments `sql`, `purpose`, `expect`. Each call creates one binding. |
-| Tool authorization (v2) | The check of a proposed client tool call against the role's allowed tools and argument rules. Outcome: allowed, denied or logged. |
+| Tool authorization (v2) | The check of a proposed client tool call against the role's allowed tools and argument rules. Outcome: `allow` or `deny`, with the rule that decided. |
 | Tool loop (v2) | The gateway's repeated model calls within one request while the model keeps calling `query_data`. Bounded by `max_tool_iterations`. |
 | Placeholder | A variable slot `{x1}`, `{x2}`, ... returned to the model as a `query_data` result. The model writes it into its answer. |
 | Binding | One `query_data` call (placeholder, SQL, purpose, expect) plus its outcome: a value or a status. Replaces the v1 binding-map entry. |

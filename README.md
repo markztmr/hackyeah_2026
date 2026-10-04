@@ -22,7 +22,7 @@ Identity is derived from the API key only. Nothing in a prompt, tool result or m
 
 ## Architecture
 
-![Architecture](docs/img/architecture.svg)
+![Architecture](docs/spec/img/architecture.svg)
 
 - Only `gateway/binding/executor.py` opens `demo.db`. The connection is read-only, with `set_authorizer` and `set_progress_handler` as a second enforcement layer.
 - The vault holds masked originals for the duration of one request. It never reaches a model, a log or an audit record.
@@ -154,6 +154,8 @@ pytest
 ollama pull qwen2.5:3b       # answer model
 ollama pull qwen2.5:1.5b     # judge model
 ```
+
+Ollama must listen on localhost only (`OLLAMA_HOST=127.0.0.1`, the default). The gateway is the only service that should be reachable from the network.
 
 Run each service in its own terminal:
 

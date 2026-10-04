@@ -29,8 +29,8 @@ the reason as an assistant message.
       signatures (tool poisoning).
 4. **Input checks.** Match the sanitized content against injection phrases and the signature
    feed. If those pass, run the judge model on the newest user message and new tool
-   results. Score at or above threshold: block. Identity claims ("I am HR") are logged as
-   suspicious and never change the principal.
+   results. Score at or above threshold: block. Identity claims ("I am HR") never change
+   the principal (I2); they are not flagged by a separate control.
 
 ## Model and tool loop
 
@@ -95,5 +95,5 @@ blocked by policy."
 
 The judge receives the content inside clear delimiters and must reply with JSON
 `{"risk": <0..1>}`. The gateway parses only the number; any other output counts as a
-judge failure and follows `semantic.on_failure`. Candidate models: `qwen2.5:1.5b`
-(general) and `llama-guard3:1b` (harmful content), chosen in the hour-1 test.
+judge failure and follows `semantic.on_failure`. The judge runs at temperature 0 on
+`qwen2.5:1.5b`, pinned by digest in `models.allowed`.

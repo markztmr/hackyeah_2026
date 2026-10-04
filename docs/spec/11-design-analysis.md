@@ -43,4 +43,4 @@ never sees.
 | Markers in the sentence or a single refusal sentence? | Markers in the sentence; `all_denied_message` optional. |
 | Enforce row scope by rejecting or rewriting? | Reject in the MVP, with the top-level-conjunct rule and an `OR 1=1` bypass test. Rewrite (each scoped table replaced by a filtered subquery) is a stretch goal. |
 | Aggregates: separate permission or column access? | Column access for now. |
-| Which answering model? | Decided by the hour-1 test (section 15). |
+| Which answering model? | `qwen2.5:3b`, chosen by the hour-1 test (section 15): it called `query_data` for every data question and used the placeholder in every answer. Judge: `qwen2.5:1.5b`. |

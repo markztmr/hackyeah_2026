@@ -7,8 +7,9 @@ dedicated test (section 14).
 
 - **I1. Single data door.** Only the gateway's executor opens the database. In production,
   models and clients have no network path or credentials to it (deployment
-  requirement). In the skeleton, a test asserts that only `executor.py` opens a database
-  connection.
+  requirement). In the code, `test_invariants.py` asserts that only `executor.py` opens
+  `demo.db`. The one other `sqlite3.connect` is `budget.py`, which opens its own
+  `state.db` and refuses a path that points at the data database.
 - **I2. Identity from authentication only.** The principal comes from the API key. Text in
   messages, tool results or model output never changes it.
 - **I3. Gateway owns parameters.** `:current_user`, `:current_role` and
